@@ -317,7 +317,85 @@ function csrf_check() {
 /* ------------------------------------------------------------------ کمکی‌ها */
 function e($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function fa($s) { return str_replace(range(0, 9), array('۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'), (string)$s); }
-function money($n) { return fa(number_format((float)$n)) . ' ریال'; }
+/* مبالغ داخلی همه «ریال» ذخیره می‌شوند؛ نمایش به «تومان» است. */
+function money($n) { return fa(number_format((float)$n / 10)) . ' تومان'; }
+
+function read_toman($key) {
+    $v = str_replace(array(',', '،', ' '), '', (string)($_POST[$key] ?? ''));
+    return is_numeric($v) && (float)$v > 0 ? (float)$v * 10 : null; /* → ریال */
+}
+function post_gregorian($name) {
+    /* مقدار میلادی ساخته‌شده توسط تقویم شمسی (hidden)؛ در نبودش، تبدیل سمت سرور */
+    $g = trim((string)($_POST[$name . '_g'] ?? ''));
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) return $g;
+    $j = trim((string)($_POST[$name] ?? ''));
+    $j = strtr($j, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','/'=>'-',' '=>''));
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $j, $m)) {
+        list($gy, $gm, $gd) = jalali_to_gregorian((int)$m[1], (int)$m[2], (int)$m[3]);
+        return sprintf('%04d-%02d-%02d', $gy, $gm, $gd);
+    }
+    return null;
+}
+
+/* حروف‌نویسی عدد فارسی */
+function to_words($n) {
+    $n = (int)$n;
+    if ($n === 0) return 'صفر';
+    $ones = array('','یک','دو','سه','چهار','پنج','شش','هفت','هشت','نه','ده','یازده','دوازده',
+                  'سیزده','چهارده','پانزده','شانزده','هفده','هجده','نوزده');
+    $tens = array('','','بیست','سی','چهل','پنجاه','شصت','هفتاد','هشتاد','نود');
+    $hund = array('','صد','دویست','سیصد','چهارصد','پانصد','ششصد','هفتصد','هشتصد','نهصد');
+    $scale = array('', ' هزار', ' میلیون', ' میلیارد', ' هزار میلیارد');
+    $groups = array(); while ($n > 0) { $groups[] = $n % 1000; $n = intdiv($n, 1000); }
+    $parts = array();
+    for ($g = count($groups) - 1; $g >= 0; $g--) {
+        $v = $groups[$g]; if (!$v) continue;
+        $t = ''; $h = intdiv($v, 100); $r = $v % 100;
+        if ($h) $t .= $hund[$h];
+        if ($r) {
+            if ($t) $t .= ' و ';
+            if ($r < 20) $t .= $ones[$r];
+            else { $t .= $tens[intdiv($r, 10)]; if ($r % 10) $t .= ' و ' . $ones[$r % 10]; }
+        }
+        $t .= $scale[$g] ?? '';
+        $parts[] = $t;
+    }
+    return implode(' و ', $parts);
+}
+function toman_words($rial) { $t = (int)round(((float)$rial) / 10); return to_words($t) . ' تومان'; }
+
+/* تبدیل شمسی به میلادی (fallback سمت سرور) */
+function jalali_to_gregorian($jy, $jm, $jd) {
+    $jy = (int)$jy - 979;
+    $jdays = 365 * $jy + intdiv($jy, 33) * 8 + intdiv(($jy % 33) + 3, 4) - 1
+           + ($jd - 1) + ($jm < 7 ? ($jm - 1) * 31 : ($jm - 7) * 30 + 186) + 31 * 3 + 106;
+    $gy = 1600 + 400 * intdiv($jdays, 146097); $jdays %= 146097;
+    if ($jdays > 36524) { $gy += 100 * intdiv(--$jdays, 36524); $jdays %= 36524; if ($jdays >= 365) $jdays++; }
+    $gy += 4 * intdiv($jdays, 1461); $jdays %= 1461;
+    if ($jdays > 365) { $gy += intdiv($jdays - 1, 365); $jdays = ($jdays - 1) % 365; }
+    $gd = $jdays + 1;
+    $sal = array(0,31,($gy%4===0 && $gy%100!==0)||$gy%400===0 ? 29:28,31,30,31,30,31,31,30,31,30,31);
+    $gm = 0;
+    foreach ($sal as $m => $dim) { if ($m === 0) continue; if ($gd <= $dim) { $gm = $m; break; } $gd -= $dim; }
+    return array($gy, $gm, $gd);
+}
+function gregorian_to_jalali_str($g) {
+    if (!$g || $g === '0000-00-00') return '';
+    $t = strtotime($g); if (!$t) return '';
+    list($jy, $jm, $jd) = gregorian_to_jalali((int)date('Y',$t), (int)date('n',$t), (int)date('j',$t));
+    return fa(sprintf('%04d/%02d/%02d', $jy, $jm, $jd));
+}
+/* فیلد تاریخ شمسی با تقویم (مقدار ورودی میلادی است) */
+function jinput_html($name, $valueGreg, $label, $required = false) {
+    $jval = gregorian_to_jalali_str($valueGreg);
+    return '<div><label>' . e($label) . ($required ? ' *' : '') . '</label>'
+       . '<input type="text" class="jdate" name="' . e($name) . '" id="jd_' . e($name) . '" value="' . e($jval) . '"'
+       . ' placeholder="مثلاً ۱۴۰۵/۰۶/۱۷" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
+       . '<input type="hidden" name="' . e($name) . '_g" id="jdg_' . e($name) . '" value="' . e($valueGreg ?: '') . '">'
+       . '</div>';
+}
+function jinput($name, $valueGreg, $label, $required = false) { echo jinput_html($name, $valueGreg, $label, $required); }
+function jinput_ret($name, $valueGreg, $label, $required = false) { return jinput_html($name, $valueGreg, $label, $required); }
 function pick_col($table, $candidates) {
     static $cache = array();
     if (isset($cache[$table])) return $cache[$table][implode(',', $candidates)] ?? null;
@@ -503,14 +581,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'create') {
         $kind      = in_array($_POST['kind'] ?? '', array('payment','guarantee'), true) ? $_POST['kind'] : 'payment';
         $direction = in_array($_POST['direction'] ?? '', array('received','issued'), true) ? $_POST['direction'] : 'received';
-        $amount    = (float)str_replace(array(',', '،'), '', (string)($_POST['amount'] ?? '0'));
+        $amount    = read_toman('amount_toman');  /* ورودی تومان → ریال */
         $sayyad    = trim((string)($_POST['sayyad_id'] ?? ''));
+        $sayyad    = str_replace(array(' ', '-', '_'), '', $sayyad);
         $chequeNo  = trim((string)($_POST['cheque_number'] ?? ''));
-        $dueDate   = $_POST['due_date'] ?? null;
-        $issueDate = $_POST['issue_date'] ?? date('Y-m-d');
+        $dueDate   = post_gregorian('due_date');
+        $issueDate = post_gregorian('issue_date') ?: date('Y-m-d');
+        $gReturn   = post_gregorian('guarantee_return_date');
 
-        if ($amount <= 0) { flash('مبلغ باید بزرگ‌تر از صفر باشد.'); }
-        elseif ($sayyad !== '' && (!preg_match('/^[0-9]{8,20}$/', $sayyad))) { flash('شناسه صیاد باید عددی (۱۶ رقم) باشد.'); }
+        if ($amount === null) { flash('مبلغ را به تومان وارد کنید (بزرگ‌تر از صفر).'); }
+        elseif ($sayyad !== '' && (!preg_match('/^[0-9]{8,20}$/', $sayyad))) { flash('شناسه صیاد باید فقط عدد (۱۶ رقم) باشد.'); }
         else {
             if ($sayyad !== '') {
                 $dup = q_one("SELECT id FROM checks WHERE sayyad_id=? AND deleted_at IS NULL", array($sayyad));
@@ -543,7 +623,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         trim((string)($_POST['party_name'] ?? '')) ?: null,
                         $amount, $issueDate, ($kind === 'payment' ? $dueDate : null),
                         $kind === 'guarantee' ? trim((string)($_POST['guarantee_reason'] ?? '')) : null,
-                        $kind === 'guarantee' ? ($_POST['guarantee_return_date'] ?: null) : null,
+                        $kind === 'guarantee' ? $gReturn : null,
                         $initStatus,
                         $_POST['ref_type'] ?: null, $_POST['ref_id'] ?: null,
                         $imgF, $imgB,
@@ -572,8 +652,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!isset($allowed[$etype])) { flash('این عملیات برای وضعیت فعلی چک مجاز نیست.'); }
             else {
                 $att = upload_cheque_file('attachment', 'ev');
-                $eid = record_event($cid, $etype, $_POST['event_date'] ?? date('Y-m-d'),
-                        ($_POST['amount'] ?? null) !== '' ? (float)str_replace(',', '', (string)$_POST['amount']) : null,
+                $evAmount = (($_POST['amount_toman'] ?? '') !== '') ? read_toman('amount_toman') : null;
+                $evDate = post_gregorian('event_date') ?: date('Y-m-d');
+                $eid = record_event($cid, $etype, $evDate, $evAmount,
                         trim((string)($_POST['bank_ref'] ?? '')) ?: null,
                         trim((string)($_POST['note'] ?? '')) ?: null, $att);
                 flash(in_array($etype, $SENSITIVE, true)
@@ -591,9 +672,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ($_POST['to_supplier_id'] ?? '') ?: null,
                             ($_POST['to_customer_id'] ?? '') ?: null,
                             trim((string)($_POST['to_name'] ?? '')) ?: null,
-                            $_POST['event_date'] ?? date('Y-m-d'),
+                            $evDate,
                             $_POST['ref_type'] ?? null, $_POST['ref_id'] ?? null,
-                            (float)str_replace(',', '', (string)($_POST['amount'] ?? '0')) ?: $chk['amount'],
+                            read_toman('amount_toman') ?: $chk['amount'],
                             trim((string)($_POST['note'] ?? '')) ?: null,
                             $me['id']
                         ));
@@ -631,11 +712,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                        VALUES (?,?,?,?,?,?,?,NOW())")
             ->execute(array(
                 $_POST['bank_account_id'] ?: null, trim((string)($_POST['series'] ?? '')) ?: null,
-                (int)$_POST['start_number'], (int)$_POST['end_number'],
-                $_POST['received_date'] ?: date('Y-m-d'), trim((string)($_POST['notes'] ?? '')) ?: null,
+                (int)str_replace(',', '', (string)($_POST['start_number'] ?? '0')),
+                (int)str_replace(',', '', (string)($_POST['end_number'] ?? '0')),
+                post_gregorian('cb_received') ?: date('Y-m-d'), trim((string)($_POST['notes'] ?? '')) ?: null,
                 $me['id']));
         flash('✅ دفترچه چک ثبت شد.');
         header('Location: cheques.php?p=create&direction=issued');
+        exit;
+    }
+
+    if ($action === 'bank') {
+        try {
+            $cols = db()->query("SHOW COLUMNS FROM bank_accounts")->fetchAll(PDO::FETCH_COLUMN);
+            $set = array(); $par = array();
+            $map = array(
+                'bank_name'      => array('bank_name','bank','title','name','account_name'),
+                'account_name'   => array('account_holder','account_holder_name','holder','account_title','owner'),
+                'account_number' => array('account_number','account_no','number','account_num'),
+                'card_number'    => array('card_number','card','card_num'),
+                'iban'           => array('iban','shaba','sheba','iban_number'),
+                'branch_name'    => array('branch','branch_name','bank_branch'),
+                'currency'       => array('currency','curr'),
+                'balance'        => array('balance','current_balance','account_balance','available_balance','opening_balance','initial_balance'),
+            );
+            foreach ($map as $formKey => $cands) {
+                foreach ($cands as $c) {
+                    if (in_array($c, $cols, true)) {
+                        if (isset($_POST[$formKey]) && trim((string)$_POST[$formKey]) !== '') {
+                            $val = $_POST[$formKey];
+                            if ($formKey === 'balance') { $val = (float)str_replace(array(',', '،'), '', (string)$val); /* تومان */ $val = $val * 10; }
+                            elseif ($formKey === 'currency' && $val === '') { $val = 'IRR'; }
+                            $set[$c] = $val;
+                        }
+                        break;
+                    }
+                }
+            }
+            /* کلیدهای رایجی که مقدار پیش‌فرض می‌خواهند */
+            foreach (array('currency'=>'IRR','status'=>'active','is_active'=>1) as $c => $dv) {
+                if (in_array($c, $cols, true) && !array_key_exists($c, $set) && !isset($set[$c])) { $set[$c] = $dv; }
+            }
+            if (isset($set['name']) && !isset($set['bank_name'])) { /* بانک بدون نام نگذرد */ }
+            if (empty($set)) { flash('ساختار جدول bank_accounts قابل تطبیق نیست؛ خروجی cols&t=bank_accounts را بفرستید.'); }
+            else {
+                $colsSql = implode(',', array_map(function($k){return "`$k`";}, array_keys($set)));
+                $ph = implode(',', array_fill(0, count($set), '?'));
+                db()->prepare("INSERT INTO bank_accounts ($colsSql) VALUES ($ph)")->execute(array_values($set));
+                flash('✅ حساب بانکی ثبت شد.');
+            }
+        } catch (Exception $ex) { flash('خطا در ثبت حساب: ' . $ex->getMessage()); }
+        header('Location: cheques.php?p=banks');
         exit;
     }
 }
@@ -705,6 +831,24 @@ function render_header($title) {
     .seg{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
     .seg a{padding:7px 15px;border-radius:8px;background:#fff;border:1px solid #e5e7eb;font-weight:600}
     .seg a.active{background:#0f2a4a;color:#fff}
+    .amount-words{font-size:12px;color:#15803d;margin-top:4px;min-height:16px;font-weight:700}
+    .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff}
+    .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;width:250px;direction:rtl}
+    .jp-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
+    .jp-head button{background:#f1f5f9;border:0;border-radius:6px;padding:2px 9px;cursor:pointer;font-size:15px}
+    .jp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+    .jp-grid .dow{font-size:11px;color:#64748b;padding:4px 0}
+    .jp-grid .day{padding:6px 0;border-radius:6px;cursor:pointer;font-size:12px}
+    .jp-grid .day:hover{background:#dbeafe}
+    .jp-grid .today{background:#fef3c7;font-weight:700}
+    .jp-grid .sel{background:#2563eb;color:#fff;font-weight:700}
+    .jp-grid .empty{visibility:hidden}
+    .scan-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:10px}
+    .scan-row figure{margin:0;border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fafcff}
+    .scan-row figcaption{font-size:12px;font-weight:700;color:#475569;margin-bottom:8px}
+    .scan-row img{width:100%;max-height:320px;object-fit:contain;border-radius:6px;border:1px solid #eee;display:block}
+    .img-preview{margin-top:8px}
+    .img-preview img{max-width:180px;max-height:120px;border:1px solid #cbd5e1;border-radius:8px;margin:4px}
     </style></head><body>
     <div class="topbar">
         <span class="brand">🏦 مدیریت چک‌ها</span>
@@ -712,12 +856,166 @@ function render_header($title) {
         <a href="cheques.php?p=list">فهرست چک‌ها</a>
         <a href="cheques.php?p=create">＋ ثبت چک جدید</a>
         <a href="cheques.php?p=reports">گزارش‌ها</a>
+        <a href="cheques.php?p=banks">🏦 حساب‌های بانکی</a>
         <a href="cheques.php?p=approvals">تأییدها' . ($pending ? ' <span class="tag tag-red">' . fa($pending) . '</span>' : '') . '</a>
         <a href="./" style="margin-right:auto">← بازگشت به ERP</a>
     </div><div class="wrap">';
     foreach (get_flash() as $f) { echo '<div class="flash">' . e($f) . '</div>'; }
 }
-function render_footer() { echo '</div></body></html>'; }
+function render_footer() {
+echo <<<'JS'
+<script>
+/* ====================== توابع تاریخ شمسی (Jalali) ====================== */
+function toEnDigits(s){return (s||'').replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d));}
+function toFaDigits(s){return (s||'').replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d]);}
+function div(a,b){return Math.floor(a/b);}
+function gregToJal(gy,gm,gd){
+  var g_d_m=[0,31,59,90,120,151,181,212,243,273,304,334];
+  var gy2=gy>1600?gy-1600:gy, gy3=gy>1600?979:0;
+  var days=365*gy2+div(gy2+3,4)-div(gy2+99,100)+div(gy2+399,400)-80+gd+g_d_m[gm-1]+(gm>2&&((gy%4===0&&gy%100!==0)||gy%400===0)?1:0);
+  var jy=-1595+33*div(days,12053); days%=12053;
+  jy+=4*div(days,1461); days%=1461;
+  if(days>365){jy+=div(days-1,365);days=(days-1)%365;}
+  var jm=days<186?1+div(days,31):7+div(days-186,30);
+  var jd=1+(days<186?days%31:(days-186)%30);
+  return [jy+gy3,jm,jd];
+}
+function jalToGreg(jy,jm,jd){
+  var gy2=jy>979?jy-979:jy, gy3=jy>979?1600:0;
+  var days=365*gy2+div(gy2,33)*8+div((gy2%33)+3,4)-1+jd+(jm<7?(jm-1)*31:(jm-7)*30+186);
+  var gy=400*div(days,146097); days%=146097;
+  if(days>36524){gy+=100*div(days,36524);days%=36524;}
+  gy+=4*div(days,1461);days%=1461;
+  if(days>365){gy+=div(days-1,365);days=(days-1)%365;}
+  var gd=days+1;
+  var sal=[0,31,(gy%4===0&&gy%100!==0)||gy%400===0?29:28,31,30,31,30,31,31,30,31,30,31];
+  var gm=1; for(;gm<=12&&gd>sal[gm];gm++) gd-=sal[gm];
+  return [gy+gy3,gm,gd];
+}
+var JMONTHS=['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'];
+var JDOW=['ش','ی','د','س','چ','پ','ج'];
+function pad(n){return (n<10?'0':'')+n;}
+
+/* تقویم شمسی ساده */
+function initJDate(input){
+  var hidden=document.getElementById('jdg_'+input.name);
+  function setFromJal(jy,jm,jd){
+    var g=jalToGreg(jy,jm,jd);
+    input.value=toFaDigits(jy+'/'+pad(jm)+'/'+pad(jd));
+    if(hidden) hidden.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
+  }
+  function parseInput(){
+    var t=toEnDigits(input.value||'').trim().replace(/\\s/g,'');
+    var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if(m) return [+m[1],+m[2],+m[3]];
+    return null;
+  }
+  /* مقدار اولیه از hidden */
+  if(hidden && hidden.value){
+    var parts=hidden.value.split('-');
+    if(parts.length===3){ var j=gregToJal(+parts[0],+parts[1],+parts[2]); input.value=toFaDigits(j[0]+'/'+pad(j[1])+'/'+pad(j[2])); }
+  }
+  var box=null;
+  function closeBox(){ if(box){ box.remove(); box=null; } }
+  function openBox(){
+    closeBox();
+    var cur=parseInput();
+    var today=gregToJal(new Date().getFullYear(),new Date().getMonth()+1,new Date().getDate());
+    var jy=cur?cur[0]:today[0], jm=cur?cur[1]:today[1], jd=cur?cur[2]:today[2];
+    box=document.createElement('div'); box.className='jp-wrap';
+    document.body.appendChild(box);
+    function jalLeap(jy){ var r=((jy-474)%2820+2820)%2820; return ((r+474+38)*682)%2816<682; }
+    function render(){
+      var g0=jalToGreg(jy,jm,1);
+      var firstDay=new Date(g0[0],g0[1]-1,g0[2]);
+      var lead=(firstDay.getDay()+1)%7; /* شنبه=0 */
+      var dim = jm<=6 ? 31 : (jm<=11 ? 30 : (jalLeap(jy)?30:29));
+      var html='<div class="jp-head"><button type="button" id="jpy-">◀</button><div><span id="jpym">'+JMONTHS[jm-1]+' '+toFaDigits(jy)+'</span></div><button type="button" id="jpy+">▶</button></div>';
+      html+='<div class="jp-grid">';
+      for(var d=0;d<7;d++) html+='<div class="dow">'+JDOW[d]+'</div>';
+      for(var i=0;i<lead;i++) html+='<div class="empty"></div>';
+      for(var day=1;day<=dim;day++){
+        var cls='day';
+        if(jy===today[0]&&jm===today[1]&&day===today[2]) cls+=' today';
+        if(cur&&jy===cur[0]&&jm===cur[1]&&day===cur[2]) cls+=' sel';
+        html+='<div class="'+cls+'" data-d="'+day+'">'+toFaDigits(day)+'</div>';
+      }
+      html+='</div>';
+      box.innerHTML=html;
+      box.querySelector('#jpy-').onclick=function(){ jm--; if(jm<1){jm=12;jy--;} render(); };
+      box.querySelector('#jpy+').onclick=function(){ jm++; if(jm>12){jm=1;jy++;} render(); };
+      box.querySelectorAll('.day').forEach(function(el){
+        el.onclick=function(){ setFromJal(jy,jm,+el.getAttribute('data-d')); closeBox(); input.dispatchEvent(new Event('change')); };
+      });
+      var r=input.getBoundingClientRect();
+      box.style.top=Math.round(window.scrollY+r.bottom+4)+'px';
+      box.style.left=Math.round(window.scrollX+r.left)+'px';
+    }
+    render();
+  }
+  input.addEventListener('focus',openBox);
+  input.addEventListener('click',openBox);
+  input.addEventListener('change',function(){ var p=parseInput(); if(p) setFromJal(p[0],p[1],p[2]); });
+  input.addEventListener('blur',function(){ setTimeout(closeBox,200); });
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeBox(); });
+}
+
+/* ====================== مبلغ: جداکننده زنده + حروف ====================== */
+function faNumWords(n){
+  var ones=['','یک','دو','سه','چهار','پنج','شش','هفت','هشت','نه','ده','یازده','دوازده','سیزده','چهارده','پانزده','شانزده','هفده','هجده','نوزده'];
+  var tens=['','','بیست','سی','چهل','پنجاه','شصت','هفتاد','هشتاد','نود'];
+  var hund=['','صد','دویست','سیصد','چهارصد','پانصد','ششصد','هفتصد','هشتصد','نهصد'];
+  var scale=['',' هزار',' میلیون',' میلیارد',' هزار میلیارد'];
+  n=Math.floor(n);
+  if(n===0) return 'صفر';
+  var groups=[]; while(n>0){ groups.push(n%1000); n=Math.floor(n/1000); }
+  var parts=[];
+  for(var g=groups.length-1;g>=0;g--){
+    var v=groups[g]; if(!v) continue; var t='';
+    var h=Math.floor(v/100), r=v%100;
+    if(h) t+=hund[h];
+    if(r){ if(t) t+=' و ';
+      if(r<20) t+=ones[r];
+      else { t+=tens[Math.floor(r/10)]; if(r%10) t+=' و '+ones[r%10]; } }
+    t+=scale[g]||''; parts.push(t);
+  }
+  return parts.join(' و ');
+}
+function initAmount(inp){
+  var words=document.getElementById(inp.id==='amount_toman'?'amount_words':null) || inp.parentElement.querySelector('.amount-words');
+  function refresh(){
+    var raw=toEnDigits(inp.value).replace(/[^0-9]/g,'');
+    var grouped=raw?toFaDigits(raw.replace(/\B(?=(\d{3})+(?!\d))/g,',')):'';
+    inp.value=grouped;
+    if(words){ words.textContent=raw?('= '+faNumWords(parseInt(raw,10))+' تومان'):''; }
+  }
+  inp.addEventListener('input',refresh);
+  inp.addEventListener('change',refresh);
+  refresh();
+}
+
+/* ====================== پیش‌نمایش تصویر قبل از آپلود ====================== */
+document.addEventListener('change',function(ev){
+  var t=ev.target;
+  if(t.type!=='file') return;
+  var holder=t.parentElement.querySelector('.img-preview');
+  if(!holder){ holder=document.createElement('div'); holder.className='img-preview'; t.parentElement.appendChild(holder); }
+  holder.innerHTML='';
+  Array.prototype.forEach.call(t.files||[],function(f){
+    if(!/^image\//.test(f.type)) return;
+    var url=URL.createObjectURL(f);
+    var img=document.createElement('img'); img.src=url; holder.appendChild(img);
+  });
+});
+
+/* مقداردهی اولیه */
+document.addEventListener('DOMContentLoaded',function(){
+  document.querySelectorAll('.jdate').forEach(initJDate);
+  document.querySelectorAll('.amount-input').forEach(initAmount);
+});
+</script>
+JS;
+echo '</div></body></html>'; }
 function status_tag($s) { global $STATUS_META; $m = $STATUS_META[$s] ?? array($s, 'gray'); return '<span class="tag tag-' . $m[1] . '">' . e($m[0]) . '</span>'; }
 function kind_label($k, $d) {
     return ($k === 'guarantee' ? '🤝 تضمینی' : '💵 پرداختی') . ' / ' . ($d === 'received' ? 'دریافتی' : 'صادره');
@@ -860,7 +1158,9 @@ function page_create() {
     echo '<input type="hidden" name="direction" value="' . e($direction) . '">';
     echo '<input type="hidden" name="kind" value="' . e($kind) . '">';
     echo '<div class="form-grid">';
-    echo '<div><label>مبلغ (ریال) *</label><input name="amount" required placeholder="مثلاً 500000000"></div>';
+    echo '<div style="grid-column:1/-1"><label>مبلغ (تومان) *</label>'
+       . '<input name="amount_toman" id="amount_toman" class="amount-input" inputmode="numeric" autocomplete="off" required placeholder="مثلاً ۵۰,۰۰۰,۰۰۰" style="font-size:16px;font-weight:700">'
+       . '<div id="amount_words" class="amount-words"></div></div>';
     echo '<div><label>شماره چک</label><input name="cheque_number" id="cheque_number"></div>';
     echo '<div><label>شناسه صیاد (۱۶ رقم)</label><input name="sayyad_id" maxlength="20" inputmode="numeric" placeholder="در صورت داشتن"></div>';
     echo '<div><label>سری / سریال</label><div style="display:flex;gap:6px"><input name="series" placeholder="سری"><input name="serial" placeholder="سریال"></div></div>';
@@ -868,7 +1168,9 @@ function page_create() {
     foreach (array('ملت','صادرات','ملی','سپه','تجارت','رفاه','پارسیان','پاسارگاد','سامان','آینده','کشاورزی','مسکن','شهر') as $bn) echo '<option>' . $bn . '</option>';
     echo '</datalist></div>';
     echo '<div><label>شعبه / کد شعبه</label><div style="display:flex;gap:6px"><input name="branch_name" placeholder="نام شعبه"><input name="branch_code" placeholder="کد" style="max-width:110px"></div></div>';
-    echo '<div><label>حساب بانکی ما ' . ($direction === 'issued' ? '(حساب صادرکننده)' : '(حساب وصول)') . '</label><select name="bank_account_id"><option value="">—</option>';
+    echo '<div><label>حساب بانکی ما ' . ($direction === 'issued' ? '(حساب صادرکننده)' : '(حساب وصول)')
+       . ' — <a href="cheques.php?p=banks" target="_blank" style="font-size:11px">＋ افزودن حساب جدید</a></label>'
+       . '<select name="bank_account_id"><option value="">—</option>';
     foreach ($banks as $b) echo '<option value="' . $b['id'] . '">' . e($b['bank_name'] . ($b['account_no'] ? ' / ' . $b['account_no'] : '')) . '</option>';
     echo '</select></div>';
 
@@ -885,11 +1187,11 @@ function page_create() {
     echo '<div><label>نام طرف (در صورت سایر)</label><input name="party_name"></div>';
 
     if ($kind === 'payment') {
-        echo '<div><label>تاریخ صدور</label><input type="date" name="issue_date" value="' . date('Y-m-d') . '"></div>';
-        echo '<div><label>تاریخ سررسید *</label><input type="date" name="due_date" required></div>';
+        jinput('issue_date', date('Y-m-d'), 'تاریخ صدور');
+        jinput('due_date', null, 'تاریخ سررسید', true);
     } else {
         echo '<div><label>بابت تضمین/وثیقه</label><input name="guarantee_reason" placeholder="مثلاً: تضمین قرارداد، گمرک، اجاره"></div>';
-        echo '<div><label>تاریخ استرداد مورد انتظار</label><input type="date" name="guarantee_return_date"></div>';
+        jinput('guarantee_return_date', null, 'تاریخ استرداد مورد انتظار');
     }
 
     if ($direction === 'issued' && $kind === 'payment') {
@@ -923,9 +1225,9 @@ function page_create() {
         <div><label>حساب</label><select name="bank_account_id"><option value="">—</option>';
         foreach ($banks as $b) echo '<option value="' . $b['id'] . '">' . e($b['bank_name']) . '</option>';
         echo '</select></div><div><label>سری</label><input name="series"></div>
-        <div><label>از شماره</label><input type="number" name="start_number" required></div>
-        <div><label>تا شماره</label><input type="number" name="end_number" required></div>
-        <div><label>تاریخ دریافت</label><input type="date" name="received_date" value="' . date('Y-m-d') . '"></div>
+        <div><label>از شماره</label><input type="text" name="start_number" inputmode="numeric" required></div>
+        <div><label>تا شماره</label><input type="text" name="end_number" inputmode="numeric" required></div>
+        ' . jinput_ret('cb_received', date('Y-m-d'), 'تاریخ دریافت') . '
         <div style="align-self:end"><button class="btn btn-gray">ثبت دفترچه</button></div>
         </div></details></form>';
     }
@@ -955,6 +1257,22 @@ function page_detail() {
     if ($c['description']) echo '<div style="grid-column:1/-1" class="muted">' . e($c['description']) . '</div>';
     echo '</div></div>';
 
+    /* تصویر چک (اسکن پشت/رو) */
+    if ($c['image_front'] || $c['image_back']) {
+        echo '<div class="card cheque-scan" style="margin-top:14px"><h4>🖼️ تصویر چک</h4><div class="scan-row">';
+        foreach (array('image_front' => 'روی چک', 'image_back' => 'پشت چک') as $imgCol => $cap) {
+            if ($c[$imgCol]) {
+                $href = e($c[$imgCol]);
+                $isPdf = preg_match('/\.pdf$/i', $href);
+                echo '<figure><figcaption>' . $cap . '</figcaption>';
+                if ($isPdf) echo '<a target="_blank" href="' . $href . '">📎 مشاهده PDF</a>';
+                else echo '<a target="_blank" href="' . $href . '"><img src="' . $href . '" alt="' . $cap . '" loading="lazy"></a>';
+                echo '</figure>';
+            }
+        }
+        echo '</div></div>';
+    }
+
     /* عملیات مجاز */
     if (!$c['locked_at']) {
         $key = $c['direction'] . '|' . $c['kind'];
@@ -970,9 +1288,9 @@ function page_detail() {
                     <input type="hidden" name="check_id" value="' . $c['id'] . '">
                     <input type="hidden" name="event_type" value="' . $etype . '">
                     <div class="form-grid">
-                    <div><label>تاریخ رویداد</label><input type="date" name="event_date" value="' . date('Y-m-d') . '"></div>';
+                    ' . jinput_ret('event_date', date('Y-m-d'), 'تاریخ رویداد');
                 if (in_array($etype, array('clear','pass','deposit'), true))
-                    echo '<div><label>مبلغ (در صورت وصول جزئی)</label><input name="amount" placeholder="خالی = مبلغ کامل چک"></div>';
+                    echo '<div><label>مبلغ (تومان — در صورت وصول جزئی)</label><input name="amount_toman" class="amount-input" inputmode="numeric" autocomplete="off" placeholder="خالی = مبلغ کامل چک"><div class="amount-words"></div></div>';
                 echo '<div><label>شماره پیگیری بانک</label><input name="bank_ref"></div>
                     <div><label>ضمیمه (رسید/برگه برگشت)</label><input type="file" name="attachment" accept="image/*,.pdf"></div>';
                 if ($etype === 'endorse') {
@@ -1101,6 +1419,55 @@ function page_reports() {
     render_footer();
 }
 
+/* ---------- حساب‌های بانکی ---------- */
+function page_banks() {
+    render_header('حساب‌های بانکی');
+    $nameCol  = pick_col('bank_accounts', array('bank_name','bank','title','name'));
+    $holderCol= pick_col('bank_accounts', array('account_holder','account_holder_name','holder','account_title','owner'));
+    $numCol   = pick_col('bank_accounts', array('account_number','account_no','number','account_num'));
+    $cardCol  = pick_col('bank_accounts', array('card_number','card','card_num'));
+    $ibanCol  = pick_col('bank_accounts', array('iban','shaba','sheba','iban_number'));
+    $branchCol= pick_col('bank_accounts', array('branch','branch_name','bank_branch'));
+    $balCol   = pick_col('bank_accounts', array('balance','current_balance','account_balance','available_balance','opening_balance','initial_balance'));
+    $curCol   = pick_col('bank_accounts', array('currency','curr'));
+
+    $banks = $nameCol ? q_all("SELECT * FROM bank_accounts ORDER BY id DESC") : array();
+
+    echo '<div class="card"><h4>حساب‌های ثبت‌شده (' . fa(count($banks)) . ')</h4>';
+    if (!$banks) echo '<div class="muted">هنوز حسابی ثبت نشده — فرم پایین را پر کنید.</div>';
+    else {
+        echo '<table><tr><th>بانک</th><th>دارنده حساب</th><th>شماره حساب</th><th>کارت</th><th>شبا</th><th>شعبه</th><th>مانده (تومان)</th></tr>';
+        foreach ($banks as $b) {
+            echo '<tr><td>' . e($b[$nameCol] ?? '—') . '</td>'
+               . '<td>' . e($b[$holderCol] ?? '—') . '</td>'
+               . '<td>' . e($b[$numCol] ?? '—') . '</td>'
+               . '<td>' . e($b[$cardCol] ?? '—') . '</td>'
+               . '<td>' . e($b[$ibanCol] ?? '—') . '</td>'
+               . '<td>' . e($b[$branchCol] ?? '—') . '</td>'
+               . '<td>' . ($balCol && isset($b[$balCol]) ? fa(number_format((float)$b[$balCol]/10)) : '<span class="muted">—</span>') . '</td></tr>';
+        }
+        echo '</table>';
+    }
+    echo '</div>';
+
+    echo '<form method="post" class="card" style="margin-top:16px">' . csrf_field();
+    echo '<input type="hidden" name="action" value="bank">';
+    echo '<h4>＋ افزودن حساب بانکی جدید</h4><div class="form-grid">';
+    echo '<div><label>نام بانک *</label><input name="bank_name" list="banklist2" required><datalist id="banklist2">';
+    foreach (array('ملت','صادرات','ملی','سپه','تجارت','رفاه','پارسیان','پاسارگاد','سامان','آینده','کشاورزی','مسکن','شهر') as $bn) echo '<option>' . $bn . '</option>';
+    echo '</datalist></div>';
+    echo '<div><label>دارنده حساب</label><input name="account_name" placeholder="نام شرکت/شخص"></div>';
+    echo '<div><label>شماره حساب</label><input name="account_number"></div>';
+    echo '<div><label>شماره کارت</label><input name="card_number" inputmode="numeric" maxlength="20"></div>';
+    echo '<div><label>شبا (IBAN)</label><input name="iban" placeholder="IR..."></div>';
+    echo '<div><label>شعبه</label><input name="branch_name"></div>';
+    echo '<div><label>مانده فعلی (تومان)</label><input name="balance" class="amount-input" inputmode="numeric" autocomplete="off"><div class="amount-words"></div></div>';
+    echo '</div><button class="btn btn-primary" style="margin-top:12px">💾 ثبت حساب</button>';
+    echo '<div class="muted" style="margin-top:8px">فقط فیلدهایی که با ساختار جدول bank_accounts شما بخوانند ذخیره می‌شوند؛ مبلغ به تومان وارد و خودکار به ریال ذخیره می‌شود.</div>';
+    echo '</form>';
+    render_footer();
+}
+
 /* ------------------------------------------------------------------ مسیریابی */
 $p = $_GET['p'] ?? 'dashboard';
 switch ($p) {
@@ -1109,6 +1476,7 @@ switch ($p) {
     case 'detail':     page_detail(); break;
     case 'approvals':  page_approvals(); break;
     case 'reports':    page_reports(); break;
+    case 'banks':      page_banks(); break;
     default:           page_dashboard();
 }
 
