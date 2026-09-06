@@ -215,15 +215,45 @@ $written = @file_put_contents($target, $moduleCode);
 if ($written !== false) { ok("cheques.php نوشته شد ($written bytes)"); }
 else { err('نوشتن cheques.php انجام نشد — مجوز پوشه erp را بررسی کنید (باید 755/775 باشد)'); }
 
+/* ---------- افزودن لینک به منوی کناری ERP ---------- */
+step(6, 'افزودن لینک «مدیریت چک‌ها» به منوی کناری');
+$main = $erpRoot . '/app/views/layouts/main.php';
+if (!is_file($main)) { warn('فایل layouts/main.php پیدا نشد — لینک را دستی اضافه کنید'); }
+else {
+    $html = file_get_contents($main);
+    if (strpos($html, 'cheques.php') !== false) {
+        ok('لینک چک‌ها از قبل در منو وجود دارد');
+    } else {
+        $anchors = array('Payment Receipts', 'Export Bundles', 'Packing Lists', 'Official Letters');
+        $lines = file($main);
+        $idx = -1; $keyword = '';
+        foreach ($lines as $i => $l) {
+            foreach ($anchors as $a) { if (stripos($l, $a) !== false) { $idx = $i; $keyword = $a; break 2; } }
+        }
+        if ($idx < 0) { warn('نقطه درج منو پیدا نشد — این خط را دستی در سایدبار اضافه کنید:'); echo "    <a href=\"/cheques.php\">🏦 مدیریت چک‌ها</a>\n"; }
+        else {
+            @copy($main, $main . '.bak-cheques-' . date('Ymd-His'));
+            $new = $lines[$idx];
+            $new = preg_replace('/href=["\'][^"\']*["\']/', 'href="/cheques.php"', $new, 1);
+            $new = str_ireplace($keyword, '🏦 مدیریت چک‌ها', $new);
+            /* حذف badge شمارش (در صورت وجود) */
+            $new = preg_replace('/<span[^>]*(badge|count|notification)[^>]*>.*?<\/span>/s', '', $new);
+            array_splice($lines, $idx + 1, 0, array($new));
+            file_put_contents($main, implode('', $lines));
+            ok('لینک بعد از «' . $keyword . '» در منو درج شد (بکاپ گرفته شد)');
+        }
+    }
+}
+
 /* ---------- پوشه آپلود ---------- */
-step(6, 'پوشه آپلود اسکن چک‌ها');
+step(7, 'پوشه آپلود اسکن چک‌ها');
 $up = $erpRoot . '/uploads/cheques';
 if (!is_dir($up)) { @mkdir($up, 0755, true); }
 if (is_dir($up) && is_writable($up)) ok('پوشه آماده و قابل‌نوشتن: uploads/cheques');
 else warn('پوشه uploads/cheques قابل‌نوشتن نیست — دسترسی را 755 کنید');
 
 /* ---------- راستی‌آزمایی ---------- */
-step(7, 'راستی‌آزمایی نهایی');
+step(8, 'راستی‌آزمایی نهایی');
 $checks = array('checks','checkbooks','check_events','check_endorsements');
 foreach ($checks as $t) {
     try { $c = $pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn(); echo "  · جدول $t: موجود ($c ردیف)\n"; }

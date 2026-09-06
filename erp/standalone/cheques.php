@@ -322,8 +322,15 @@ function upload_cheque_file($field, $prefix) {
     $dir = __DIR__ . '/uploads/cheques';
     if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
     $name = $prefix . '_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-    if (move_uploaded_file($_FILES[$field]['tmp_name'], $dir . '/' . $name)) return 'uploads/cheques/' . $name;
+    if (move_uploaded_file($_FILES[$field]['tmp_name'], $dir . '/' . $name)) return '/uploads/cheques/' . $name;
     return null;
+}
+/* مسیر امن برای نمایش فایل (مطلق‌کردن مسیرهای نسبی قدیمی) */
+function asset_url($p) {
+    $p = (string)$p;
+    if ($p === '') return '';
+    if (preg_match('#^https?://#', $p) || $p[0] === '/') return $p;
+    return '/' . ltrim($p, '/');
 }
 function flash($msg) { $_SESSION['cheque_flash'][] = $msg; }
 function get_flash() { $f = $_SESSION['cheque_flash'] ?? array(); unset($_SESSION['cheque_flash']); return $f; }
@@ -595,40 +602,70 @@ function render_header($title) {
     try { $pending = (int)q_one("SELECT COUNT(*) c FROM check_events WHERE approval_status='pending'")['c']; } catch (Exception $e) {}
     echo '<!doctype html><html dir="rtl" lang="fa"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <title>' . e($title) . ' — مدیریت چک‌ها</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
     <style>
-    *{box-sizing:border-box} body{margin:0;font-family:Tahoma,"Segoe UI",sans-serif;background:#f1f4f8;color:#1f2937;font-size:14px}
-    a{color:#2563eb;text-decoration:none} a:hover{text-decoration:underline}
-    .topbar{background:#0f2a4a;color:#fff;padding:12px 20px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
-    .topbar a{color:#dbeafe;font-weight:600} .topbar .brand{font-size:17px;font-weight:700;color:#fff}
-    .wrap{max-width:1200px;margin:20px auto;padding:0 16px}
+    :root{
+      --navy:#0f2347; --navy2:#16294f; --navy-line:#1f3563;
+      --blue:#2563eb; --blue2:#3b82f6; --bg:#f3f5fa; --ink:#1f2937; --muted:#6b7280;
+      --card-border:#e9edf3;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:"Vazirmatn",Vazir,IRANSans,"Segoe UI",Tahoma,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+    a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+
+    /* ---------- چیدمان: سایدبار سرمه‌ای (مثل ERP) ---------- */
+    .shell{display:flex;min-height:100vh}
+    .sidebar{width:232px;min-width:232px;background:var(--navy);color:#c7d3e8;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+    .brand{display:flex;align-items:center;gap:10px;padding:16px 16px;border-bottom:1px solid var(--navy-line)}
+    .brand .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#22d3ee,#2563eb);display:flex;align-items:center;justify-content:center;font-size:18px}
+    .brand .bt{color:#fff;font-weight:800;font-size:15px;line-height:1.1}
+    .brand .bs{color:#7f92b5;font-size:10px;letter-spacing:1px}
+    .nav{padding:10px 12px;flex:1;overflow-y:auto}
+    .nav-sec{color:#6f82a6;font-size:10px;font-weight:700;letter-spacing:1px;margin:14px 10px 6px}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;color:#c7d3e8;font-weight:600;font-size:13px;margin:2px 0}
+    .nav-item:hover{background:rgba(255,255,255,.06);text-decoration:none;color:#fff}
+    .nav-item.active{background:rgba(37,99,235,.22);color:#fff}
+    .nav-item .ic{width:18px;text-align:center;font-size:15px}
+    .nav-item .bdg{margin-right:auto;background:var(--blue2);color:#fff;border-radius:999px;font-size:10px;font-weight:700;padding:1px 8px;min-width:20px;text-align:center}
+    .nav-user{display:flex;align-items:center;gap:9px;padding:12px 16px;border-top:1px solid var(--navy-line);font-size:12px;color:#dbe4f3}
+    .nav-user .av{width:30px;height:30px;border-radius:50%;background:var(--blue2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+
+    .main{flex:1;min-width:0;display:flex;flex-direction:column}
+    .topbar{background:#fff;border-bottom:1px solid var(--card-border);padding:12px 24px;display:flex;align-items:center;gap:12px}
+    .topbar h1{font-size:17px;font-weight:800;margin:0;flex:1}
+    .body{padding:22px 24px;max-width:1180px;width:100%;margin:0 auto}
+    @media(max-width:820px){ .sidebar{position:fixed;z-index:50;transform:translateX(100%);transition:.2s} .sidebar.open{transform:none} .menu-toggle{display:inline-block!important} }
+    .menu-toggle{display:none;background:var(--navy);color:#fff;border:0;border-radius:8px;padding:7px 12px;font-size:16px;cursor:pointer}
+
     .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:18px}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px}
-    .card h4{margin:0 0 8px;font-size:13px;color:#6b7280;font-weight:600}
-    .card .big{font-size:22px;font-weight:700} .card .sub{color:#6b7280;font-size:12px;margin-top:4px}
+    .card{background:#fff;border:1px solid var(--card-border);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(16,35,71,.04)}
+    .card h4{margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:700}
+    .card .big{font-size:22px;font-weight:800} .card .sub{color:var(--muted);font-size:12px;margin-top:4px}
     table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
     th,td{padding:10px 12px;border-bottom:1px solid #eef1f4;text-align:right;font-size:13px}
     th{background:#f8fafc;color:#475569;font-weight:700} tr:hover td{background:#fafcff}
     .tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;color:#fff}
     .tag-blue{background:#2563eb}.tag-green{background:#16a34a}.tag-red{background:#dc2626}.tag-orange{background:#ea580c}
     .tag-yellow{background:#ca8a04}.tag-gray{background:#6b7280}.tag-cyan{background:#0891b2}.tag-purple{background:#7c3aed}
-    .btn{display:inline-block;padding:8px 16px;border-radius:8px;border:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700}
-    .btn-primary{background:#2563eb;color:#fff}.btn-green{background:#16a34a;color:#fff}.btn-red{background:#dc2626;color:#fff}
-    .btn-gray{background:#e5e7eb;color:#374151}.btn-sm{padding:4px 10px;font-size:12px}
+    .btn{display:inline-block;padding:9px 18px;border-radius:9px;border:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:700}
+    .btn-primary{background:var(--blue);color:#fff}.btn-green{background:#16a34a;color:#fff}.btn-red{background:#dc2626;color:#fff}
+    .btn-gray{background:#eef1f6;color:#374151}.btn-sm{padding:5px 11px;font-size:12px}
     .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
     label{display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px}
-    input,select,textarea{width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font-family:inherit;font-size:13px}
-    .flash{background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;padding:10px 14px;border-radius:8px;margin-bottom:10px}
-    .flash-w{background:#fffbeb;border-color:#fcd34d;color:#92400e}
-    .muted{color:#6b7280;font-size:12px}.danger-box{background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:12px 16px;margin-bottom:14px}
+    input,select,textarea{width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:9px;font-family:inherit;font-size:13px;background:#fff}
+    input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue2);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+    .flash{background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;padding:10px 14px;border-radius:10px;margin-bottom:10px;font-weight:600}
+    .muted{color:var(--muted);font-size:12px}.danger-box{background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;padding:12px 16px;margin-bottom:14px;font-weight:600}
     .timeline{border-right:3px solid #e5e7eb;padding-right:16px}
-    .tl-item{position:relative;margin-bottom:16px}.tl-item:before{content:"";position:absolute;right:-24px;top:4px;width:11px;height:11px;border-radius:50%;background:#2563eb}
+    .tl-item{position:relative;margin-bottom:16px}.tl-item:before{content:"";position:absolute;right:-24px;top:4px;width:11px;height:11px;border-radius:50%;background:var(--blue)}
     .tl-pending{background:#fff;border:1px dashed #f59e0b;border-radius:10px;padding:10px 14px;margin:8px 0}
     .seg{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-    .seg a{padding:7px 15px;border-radius:8px;background:#fff;border:1px solid #e5e7eb;font-weight:600}
-    .seg a.active{background:#0f2a4a;color:#fff}
+    .seg a{padding:8px 16px;border-radius:9px;background:#fff;border:1px solid var(--card-border);font-weight:700;color:#374151}
+    .seg a.active{background:var(--navy);color:#fff}
     .amount-words{font-size:12px;color:#15803d;margin-top:4px;min-height:16px;font-weight:700}
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff}
-    .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;width:250px;direction:rtl}
+    .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 32px rgba(15,35,71,.2);padding:10px;width:250px;direction:rtl}
     .jp-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
     .jp-head button{background:#f1f5f9;border:0;border-radius:6px;padding:2px 9px;cursor:pointer;font-size:15px}
     .jp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
@@ -636,25 +673,43 @@ function render_header($title) {
     .jp-grid .day{padding:6px 0;border-radius:6px;cursor:pointer;font-size:12px}
     .jp-grid .day:hover{background:#dbeafe}
     .jp-grid .today{background:#fef3c7;font-weight:700}
-    .jp-grid .sel{background:#2563eb;color:#fff;font-weight:700}
+    .jp-grid .sel{background:var(--blue);color:#fff;font-weight:700}
     .jp-grid .empty{visibility:hidden}
     .scan-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:10px}
-    .scan-row figure{margin:0;border:1px solid #e5e7eb;border-radius:10px;padding:10px;background:#fafcff}
+    .scan-row figure{margin:0;border:1px solid var(--card-border);border-radius:12px;padding:10px;background:#fafcff}
     .scan-row figcaption{font-size:12px;font-weight:700;color:#475569;margin-bottom:8px}
-    .scan-row img{width:100%;max-height:320px;object-fit:contain;border-radius:6px;border:1px solid #eee;display:block}
+    .scan-row img{width:100%;max-height:320px;object-fit:contain;border-radius:8px;border:1px solid #eee;display:block}
     .img-preview{margin-top:8px}
     .img-preview img{max-width:180px;max-height:120px;border:1px solid #cbd5e1;border-radius:8px;margin:4px}
     </style></head><body>
-    <div class="topbar">
-        <span class="brand">🏦 مدیریت چک‌ها</span>
-        <a href="cheques.php?p=dashboard">داشبورد</a>
-        <a href="cheques.php?p=list">فهرست چک‌ها</a>
-        <a href="cheques.php?p=create">＋ ثبت چک جدید</a>
-        <a href="cheques.php?p=reports">گزارش‌ها</a>
-        <a href="cheques.php?p=banks">🏦 حساب‌های بانکی</a>
-        <a href="cheques.php?p=approvals">تأییدها' . ($pending ? ' <span class="tag tag-red">' . fa($pending) . '</span>' : '') . '</a>
-        <a href="./" style="margin-right:auto">← بازگشت به ERP</a>
-    </div><div class="wrap">';
+    <div class="shell">';
+    global $me;
+    $pnow = $_GET['p'] ?? 'dashboard';
+    $act = function($key) use ($pnow) { return ($pnow === $key) ? ' active' : ''; };
+    echo '<aside class="sidebar" id="sidebar">
+      <div class="brand"><div class="logo">🏦</div><div><div class="bt">مدیریت چک‌ها</div><div class="bs">CHEQUE SYSTEM</div></div></div>
+      <nav class="nav">
+        <div class="nav-sec">MAIN</div>
+        <a class="nav-item' . $act('dashboard') . '" href="cheques.php?p=dashboard"><span class="ic">▦</span> داشبورد</a>
+        <a class="nav-item' . $act('list') . '" href="cheques.php?p=list"><span class="ic">📄</span> فهرست چک‌ها</a>
+        <a class="nav-item' . $act('create') . '" href="cheques.php?p=create"><span class="ic">＋</span> ثبت چک جدید</a>
+        <a class="nav-item' . $act('approvals') . '" href="cheques.php?p=approvals"><span class="ic">✓</span> تأییدها'
+          . ($pending ? '<span class="bdg">' . fa($pending) . '</span>' : '') . '</a>
+        <div class="nav-sec">REPORTS &amp; BANKS</div>
+        <a class="nav-item' . $act('reports') . '" href="cheques.php?p=reports"><span class="ic">📊</span> گزارش‌ها</a>
+        <a class="nav-item' . $act('banks') . '" href="cheques.php?p=banks"><span class="ic">🏦</span> حساب‌های بانکی</a>
+        <div class="nav-sec">BACK</div>
+        <a class="nav-item" href="./"><span class="ic">←</span> بازگشت به ERP</a>
+      </nav>
+      <div class="nav-user"><span class="av">' . e(mb_substr((string)($me['name'] ?: 'A'), 0, 1)) . '</span><span>' . e($me['name']) . '</span></div>
+    </aside>
+    <div class="main">
+      <div class="topbar">
+        <button class="menu-toggle" onclick="document.getElementById(\'sidebar\').classList.toggle(\'open\')">☰</button>
+        <h1>' . e($title) . '</h1>
+        <a class="btn btn-primary" href="cheques.php?p=create">＋ ثبت چک جدید</a>
+      </div>
+      <div class="body">';
     foreach (get_flash() as $f) { echo '<div class="flash">' . e($f) . '</div>'; }
 }
 function render_footer() {
@@ -691,7 +746,6 @@ var JMONTHS=['فروردین','اردیبهشت','خرداد','تیر','مردا
 var JDOW=['ش','ی','د','س','چ','پ','ج'];
 function pad(n){return (n<10?'0':'')+n;}
 
-/* تقویم شمسی ساده */
 function initJDate(input){
   var hidden=document.getElementById('jdg_'+input.name);
   function setFromJal(jy,jm,jd){
@@ -700,18 +754,18 @@ function initJDate(input){
     if(hidden) hidden.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
   }
   function parseInput(){
-    var t=toEnDigits(input.value||'').trim().replace(/\\s/g,'');
+    var t=toEnDigits(input.value||'').trim().replace(/\s/g,'');
     var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
     if(m) return [+m[1],+m[2],+m[3]];
     return null;
   }
-  /* مقدار اولیه از hidden */
   if(hidden && hidden.value){
     var parts=hidden.value.split('-');
     if(parts.length===3){ var j=gregToJal(+parts[0],+parts[1],+parts[2]); input.value=toFaDigits(j[0]+'/'+pad(j[1])+'/'+pad(j[2])); }
   }
   var box=null;
   function closeBox(){ if(box){ box.remove(); box=null; } }
+  function jalLeap(jy){ var r=((jy-474)%2820+2820)%2820; return ((r+474+38)*682)%2816<682; }
   function openBox(){
     closeBox();
     var cur=parseInput();
@@ -719,11 +773,10 @@ function initJDate(input){
     var jy=cur?cur[0]:today[0], jm=cur?cur[1]:today[1], jd=cur?cur[2]:today[2];
     box=document.createElement('div'); box.className='jp-wrap';
     document.body.appendChild(box);
-    function jalLeap(jy){ var r=((jy-474)%2820+2820)%2820; return ((r+474+38)*682)%2816<682; }
     function render(){
       var g0=jalToGreg(jy,jm,1);
       var firstDay=new Date(g0[0],g0[1]-1,g0[2]);
-      var lead=(firstDay.getDay()+1)%7; /* شنبه=0 */
+      var lead=(firstDay.getDay()+1)%7;
       var dim = jm<=6 ? 31 : (jm<=11 ? 30 : (jalLeap(jy)?30:29));
       var html='<div class="jp-head"><button type="button" id="jpy-">◀</button><div><span id="jpym">'+JMONTHS[jm-1]+' '+toFaDigits(jy)+'</span></div><button type="button" id="jpy+">▶</button></div>';
       html+='<div class="jp-grid">';
@@ -755,7 +808,6 @@ function initJDate(input){
   document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeBox(); });
 }
 
-/* ====================== مبلغ: جداکننده زنده + حروف ====================== */
 function faNumWords(n){
   var ones=['','یک','دو','سه','چهار','پنج','شش','هفت','هشت','نه','ده','یازده','دوازده','سیزده','چهارده','پانزده','شانزده','هفده','هجده','نوزده'];
   var tens=['','','بیست','سی','چهل','پنجاه','شصت','هفتاد','هشتاد','نود'];
@@ -777,7 +829,9 @@ function faNumWords(n){
   return parts.join(' و ');
 }
 function initAmount(inp){
-  var words=document.getElementById(inp.id==='amount_toman'?'amount_words':null) || inp.parentElement.querySelector('.amount-words');
+  var words = inp.id==='amount_toman'
+      ? document.getElementById('amount_words')
+      : inp.parentElement.querySelector('.amount-words');
   function refresh(){
     var raw=toEnDigits(inp.value).replace(/[^0-9]/g,'');
     var grouped=raw?toFaDigits(raw.replace(/\B(?=(\d{3})+(?!\d))/g,',')):'';
@@ -789,28 +843,42 @@ function initAmount(inp){
   refresh();
 }
 
-/* ====================== پیش‌نمایش تصویر قبل از آپلود ====================== */
+/* پیش‌نمایش تصویر قبل از آپلود */
 document.addEventListener('change',function(ev){
   var t=ev.target;
-  if(t.type!=='file') return;
-  var holder=t.parentElement.querySelector('.img-preview');
-  if(!holder){ holder=document.createElement('div'); holder.className='img-preview'; t.parentElement.appendChild(holder); }
-  holder.innerHTML='';
-  Array.prototype.forEach.call(t.files||[],function(f){
-    if(!/^image\//.test(f.type)) return;
-    var url=URL.createObjectURL(f);
-    var img=document.createElement('img'); img.src=url; holder.appendChild(img);
-  });
+  if(t.type==='file'){
+    var holder=t.parentElement.querySelector('.img-preview');
+    if(!holder){ holder=document.createElement('div'); holder.className='img-preview'; t.parentElement.appendChild(holder); }
+    holder.innerHTML='';
+    Array.prototype.forEach.call(t.files||[],function(f){
+      if(!/^image\//.test(f.type)) return;
+      var img=document.createElement('img'); img.src=URL.createObjectURL(f); holder.appendChild(img);
+    });
+  }
+  /* انتخاب طرف حساب (جایگزین onchange خراب) */
+  if(t.id==='party_type'){
+    var cust=document.getElementById('party_cust'), sup=document.getElementById('party_sup');
+    if(cust) cust.style.display = t.value==='customer' ? 'block' : 'none';
+    if(sup)  sup.style.display  = t.value==='supplier' ? 'block' : 'none';
+  }
+  /* دفترچه چک → شماره بعدی (جایگزین onchange خراب) */
+  if(t.id==='cb'){
+    var n=t.options[t.selectedIndex].getAttribute('data-next');
+    var cn=document.getElementById('cheque_number');
+    if(n && cn){ cn.value=n; }
+  }
 });
 
-/* مقداردهی اولیه */
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('.jdate').forEach(initJDate);
   document.querySelectorAll('.amount-input').forEach(initAmount);
+  /* وضعیت اولیه بخش طرف حساب */
+  var pt=document.getElementById('party_type');
+  if(pt){ pt.dispatchEvent(new Event('change')); }
 });
 </script>
 JS;
-echo '</div></body></html>'; }
+echo '</div></div></div></body></html>'; }
 function status_tag($s) { global $STATUS_META; $m = $STATUS_META[$s] ?? array($s, 'gray'); return '<span class="tag tag-' . $m[1] . '">' . e($m[0]) . '</span>'; }
 function kind_label($k, $d) {
     return ($k === 'guarantee' ? '🤝 تضمینی' : '💵 پرداختی') . ' / ' . ($d === 'received' ? 'دریافتی' : 'صادره');
@@ -970,13 +1038,17 @@ function page_create() {
     echo '</select></div>';
 
     /* طرف حساب */
+    /* مقدار اولیه طرف حساب: برای صادره پیش‌فرض تأمین‌کننده، برای دریافتی مشتری */
+    $defaultParty = $direction === 'issued' ? 'supplier' : 'customer';
     $partyLabel = $direction === 'received' ? 'صادرکننده چک (مشتری)' : 'ذی‌نفع (تأمین‌کننده)';
-    echo '<div><label>' . $partyLabel . '</label><select name="party_type" id="party_type" onchange="document.getElementById(\'party_cust\').style.display=this.value===\'customer\'?\'block\':\'none\';document.getElementById(\'party_sup\').style.display=this.value===\'supplier\'?\'block\':\'none\';">
-        <option value="customer">مشتری</option><option value="supplier">تأمین‌کننده</option><option value="other">سایر (نام دستی)</option></select></div>';
-    echo '<div id="party_cust"><label>انتخاب مشتری</label><select name="customer_id"><option value="">—</option>';
+    echo '<div><label>' . $partyLabel . '</label><select name="party_type" id="party_type">'
+       . '<option value="customer"' . ($defaultParty==='customer'?' selected':'') . '>مشتری</option>'
+       . '<option value="supplier"' . ($defaultParty==='supplier'?' selected':'') . '>تأمین‌کننده</option>'
+       . '<option value="other">سایر (نام دستی)</option></select></div>';
+    echo '<div id="party_cust"' . ($defaultParty!=='customer'?' style="display:none"':'') . '><label>انتخاب مشتری</label><select name="customer_id"><option value="">—</option>';
     foreach ($customers as $c) echo '<option value="' . $c['id'] . '">' . e($c['name']) . '</option>';
     echo '</select></div>';
-    echo '<div id="party_sup" style="display:none"><label>انتخاب تأمین‌کننده</label><select name="supplier_id"><option value="">—</option>';
+    echo '<div id="party_sup"' . ($defaultParty!=='supplier'?' style="display:none"':'') . '><label>انتخاب تأمین‌کننده</label><select name="supplier_id"><option value="">—</option>';
     foreach ($suppliers as $s) echo '<option value="' . $s['id'] . '">' . e($s['name']) . '</option>';
     echo '</select></div>';
     echo '<div><label>نام طرف (در صورت سایر)</label><input name="party_name"></div>';
@@ -990,7 +1062,7 @@ function page_create() {
     }
 
     if ($direction === 'issued' && $kind === 'payment') {
-        echo '<div><label>دفترچه چک (شماره بعدی خودکار)</label><select name="checkbook_id" id="cb" onchange="var n=this.options[this.selectedIndex].getAttribute(\'data-next\');if(n){document.getElementById(\'cheque_number\').value=n;}"><option value="">— بدون دفترچه —</option>';
+        echo '<div><label>دفترچه چک (شماره بعدی خودکار)</label><select name="checkbook_id" id="cb"><option value="">— بدون دفترچه —</option>';
         foreach ($cbs as $cb) {
             $next = next_cheque_number($cb['id']);
             $label = ($cb['series'] ?: 'دفترچه') . ' (' . $cb['start_number'] . '-' . $cb['end_number'] . ')'
@@ -1047,8 +1119,8 @@ function page_detail() {
         <div><b>تاریخ صدور:</b> ' . jdate_long($c['issue_date']) . '</div>
         <div><b>سررسید:</b> ' . jdate_long($c['kind']==='guarantee' ? $c['guarantee_return_date'] : $c['due_date']) . ' ' . due_badge($c['kind']==='guarantee' ? $c['guarantee_return_date'] : $c['due_date']) . '</div>';
     if ($c['kind'] === 'guarantee') echo '<div><b>بابت:</b> ' . e($c['guarantee_reason'] ?: '—') . '</div>';
-    echo '<div><b>اسکن:</b> ' . ($c['image_front'] ? '<a target="_blank" href="' . e($c['image_front']) . '">رو</a>' : '—') . ' | '
-        . ($c['image_back'] ? '<a target="_blank" href="' . e($c['image_back']) . '">پشت</a>' : '—') . '</div>';
+    echo '<div><b>اسکن:</b> ' . ($c['image_front'] ? '<a target="_blank" href="' . e(asset_url($c['image_front'])) . '">رو</a>' : '—') . ' | '
+        . ($c['image_back'] ? '<a target="_blank" href="' . e(asset_url($c['image_back'])) . '">پشت</a>' : '—') . '</div>';
     if ($c['description']) echo '<div style="grid-column:1/-1" class="muted">' . e($c['description']) . '</div>';
     echo '</div></div>';
 
@@ -1056,12 +1128,12 @@ function page_detail() {
     if ($c['image_front'] || $c['image_back']) {
         echo '<div class="card cheque-scan" style="margin-top:14px"><h4>🖼️ تصویر چک</h4><div class="scan-row">';
         foreach (array('image_front' => 'روی چک', 'image_back' => 'پشت چک') as $imgCol => $cap) {
-            if ($c[$imgCol]) {
-                $href = e($c[$imgCol]);
+            if (!empty($c[$imgCol])) {
+                $href = e(asset_url($c[$imgCol]));
                 $isPdf = preg_match('/\.pdf$/i', $href);
                 echo '<figure><figcaption>' . $cap . '</figcaption>';
                 if ($isPdf) echo '<a target="_blank" href="' . $href . '">📎 مشاهده PDF</a>';
-                else echo '<a target="_blank" href="' . $href . '"><img src="' . $href . '" alt="' . $cap . '" loading="lazy"></a>';
+                else echo '<a target="_blank" href="' . $href . '"><img src="' . $href . '" alt="' . $cap . '" loading="lazy" onerror="this.style.opacity=.3;this.title=\'فایل یافت نشد\'"></a>';
                 echo '</figure>';
             }
         }
