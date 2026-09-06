@@ -230,8 +230,13 @@ foreach ($checks as $t) {
     catch (PDOException $e) { err("جدول $t در دسترس نیست"); }
 }
 if (is_file($target)) {
-    $tok = @token_get_all(file_get_contents($target));
+    $code = @file_get_contents($target);
     echo "  · فایل cheques.php موجود است (" . filesize($target) . " bytes)\n";
+    if (strpos($code, 'erp_session_name') !== false) {
+        echo "  · ✅ نسخه دارای اتصال سشن ERP (adapharma_erp_session)\n";
+    } else {
+        echo "  · ⚠️  نسخه قدیمی فاقد اتصال سشن است — دوباره این نصب‌کننده را اجرا کنید\n";
+    }
 }
 
 echo "\n============================================================\n";

@@ -225,6 +225,16 @@ $moduleCode = <<<'MODULECODE'
  * ============================================================================
  */
 
+/* ERP سشن اختصاصی دارد: index.php → session_name(SESSION_NAME) که نام کوکی‌اش
+   «adapharma_erp_session» است. باید قبل از session_start همان نام را ست کنیم. */
+function erp_session_name() {
+    if (!empty($_COOKIE['adapharma_erp_session'])) return 'adapharma_erp_session';
+    foreach (array_keys($_COOKIE) as $k) {
+        if (preg_match('/erp/i', $k) && preg_match('/sess|sid/i', $k)) return $k;
+    }
+    return 'adapharma_erp_session';
+}
+session_name(erp_session_name());
 session_start();
 
 const DB_HOST = 'localhost';
@@ -247,21 +257,29 @@ function db() {
     return $pdo;
 }
 
-/* ------------------------------------------------------------------ کاربر */
+/* ------------------------------------------------------------------ کاربر
+   کلیدهای فریم‌ورک ERP (طبق app/core/Auth.php):
+   $_SESSION['user_id'] ، $_SESSION['user']['id'|'name'|'email'|'role']          */
 function current_user() {
-    $keys = array('user_id', 'uid', 'id');
-    $id   = null;
-    foreach ($keys as $k) { if (!empty($_SESSION[$k]) && is_numeric($_SESSION[$k])) { $id = (int)$_SESSION[$k]; break; } }
-    if ($id === null && !empty($_SESSION['user']['id']))    { $id = (int)$_SESSION['user']['id']; }
-    if ($id === null && !empty($_SESSION['auth']['id']))    { $id = (int)$_SESSION['auth']['id']; }
-    if ($id === null && !empty($_SESSION['user_id']))       { $id = (int)$_SESSION['user_id']; }
+    $id = null;
+    if (!empty($_SESSION['user_id']) && is_numeric($_SESSION['user_id']))   $id = (int)$_SESSION['user_id'];
+    elseif (!empty($_SESSION['user']['id']))                                $id = (int)$_SESSION['user']['id'];
+    else {
+        foreach (array('uid', 'id', 'auth') as $k) {
+            if (!empty($_SESSION[$k]) && is_numeric($_SESSION[$k])) { $id = (int)$_SESSION[$k]; break; }
+        }
+        if ($id === null && !empty($_SESSION['auth']['id'])) $id = (int)$_SESSION['auth']['id'];
+    }
 
     $name = null;
-    foreach (array('user_name', 'name', 'full_name', 'username', 'email') as $k) {
-        if (!empty($_SESSION[$k]) && is_string($_SESSION[$k])) { $name = $_SESSION[$k]; break; }
+    if (!empty($_SESSION['user']['name']))      $name = $_SESSION['user']['name'];
+    elseif (!empty($_SESSION['user']['full_name'])) $name = $_SESSION['user']['full_name'];
+    elseif (!empty($_SESSION['user']['email'])) $name = $_SESSION['user']['email'];
+    if ($name === null) {
+        foreach (array('user_name', 'full_name', 'name', 'username') as $k) {
+            if (!empty($_SESSION[$k]) && is_string($_SESSION[$k])) { $name = $_SESSION[$k]; break; }
+        }
     }
-    if ($name === null && !empty($_SESSION['user']['name']))     { $name = $_SESSION['user']['name']; }
-    if ($name === null && !empty($_SESSION['user']['username'])) { $name = $_SESSION['user']['username']; }
     if ($name === null && $id !== null) {
         try {
             $col = pick_col('users', array('name', 'full_name', 'username', 'email'));
@@ -269,8 +287,8 @@ function current_user() {
         } catch (Exception $e) { /* ignore */ }
     }
     $role = null;
-    foreach (array('role', 'user_type', 'user_role') as $k) { if (!empty($_SESSION[$k])) { $role = (string)$_SESSION[$k]; break; } }
-    if ($role === null && !empty($_SESSION['user']['role'])) { $role = (string)$_SESSION['user']['role']; }
+    if (!empty($_SESSION['user']['role']))      $role = (string)$_SESSION['user']['role'];
+    elseif (!empty($_SESSION['role']))          $role = (string)$_SESSION['role'];
     return array('id' => $id, 'name' => $name ?: ('کاربر #' . $id), 'role' => $role);
 }
 
@@ -1120,8 +1138,13 @@ foreach ($checks as $t) {
     catch (PDOException $e) { err("جدول $t در دسترس نیست"); }
 }
 if (is_file($target)) {
-    $tok = @token_get_all(file_get_contents($target));
+    $code = @file_get_contents($target);
     echo "  · فایل cheques.php موجود است (" . filesize($target) . " bytes)\n";
+    if (strpos($code, 'erp_session_name') !== false) {
+        echo "  · ✅ نسخه دارای اتصال سشن ERP (adapharma_erp_session)\n";
+    } else {
+        echo "  · ⚠️  نسخه قدیمی فاقد اتصال سشن است — دوباره این نصب‌کننده را اجرا کنید\n";
+    }
 }
 
 echo "\n============================================================\n";
