@@ -394,7 +394,8 @@ function gregorian_to_jalali_str($g) {
 /* فیلد تاریخ شمسی با تقویم (مقدار ورودی میلادی است) */
 function jinput_html($name, $valueGreg, $label, $required = false) {
     $jval = gregorian_to_jalali_str($valueGreg);
-    return '<div><label>' . e($label) . ($required ? ' *' : '') . '</label>'
+    return '<div class="jfield"><label>' . e($label) . ($required ? ' *' : '') . '</label>'
+       . '<span class="jico">📅</span>'
        . '<input type="text" class="jdate" name="' . e($name) . '" id="jd_' . e($name) . '" value="' . e($jval) . '"'
        . ' placeholder="مثلاً ۱۴۰۵/۰۶/۱۷" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
        . '<input type="hidden" name="' . e($name) . '_g" id="jdg_' . e($name) . '" value="' . e($valueGreg ?: '') . '">'
@@ -930,7 +931,9 @@ function render_header($title) {
     .seg a{padding:8px 16px;border-radius:9px;background:#fff;border:1px solid var(--card-border);font-weight:700;color:#374151}
     .seg a.active{background:var(--navy);color:#fff}
     .amount-words{font-size:12px;color:#15803d;margin-top:4px;min-height:16px;font-weight:700}
-    .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'><rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/></svg>") no-repeat left 10px center; padding-left:34px}
+    .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
+    .jfield{position:relative}
+    .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
     .jdate-wrap{position:relative}
     .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 32px rgba(15,35,71,.2);padding:10px;width:250px;direction:rtl}
     .jp-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
