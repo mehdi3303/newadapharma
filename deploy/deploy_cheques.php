@@ -904,6 +904,9 @@ function render_header($title) {
     .pill.active .n{background:rgba(255,255,255,.25);color:#fff}
     .tablecard{background:#fff;border:1px solid var(--card-border);border-radius:14px;padding:6px 16px 16px;box-shadow:0 1px 2px rgba(16,35,71,.04)}
     .tablecard table{border-radius:10px}
+    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .table-scroll table{min-width:640px}
+    .table-scroll td,.table-scroll th{white-space:nowrap}
     .card .big{font-size:22px;font-weight:800} .card .sub{color:var(--muted);font-size:12px;margin-top:4px}
     table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
     th,td{padding:10px 12px;border-bottom:1px solid #eef1f4;text-align:right;font-size:13px}
@@ -927,7 +930,8 @@ function render_header($title) {
     .seg a{padding:8px 16px;border-radius:9px;background:#fff;border:1px solid var(--card-border);font-weight:700;color:#374151}
     .seg a.active{background:var(--navy);color:#fff}
     .amount-words{font-size:12px;color:#15803d;margin-top:4px;min-height:16px;font-weight:700}
-    .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff}
+    .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'><rect x='3' y='4' width='18' height='18' rx='2'/><line x1='16' y1='2' x2='16' y2='6'/><line x1='8' y1='2' x2='8' y2='6'/><line x1='3' y1='10' x2='21' y2='10'/></svg>") no-repeat left 10px center; padding-left:34px}
+    .jdate-wrap{position:relative}
     .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 32px rgba(15,35,71,.2);padding:10px;width:250px;direction:rtl}
     .jp-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
     .jp-head button{background:#f1f5f9;border:0;border-radius:6px;padding:2px 9px;cursor:pointer;font-size:15px}
@@ -1010,7 +1014,11 @@ var JDOW=['ش','ی','د','س','چ','پ','ج'];
 function pad(n){return (n<10?'0':'')+n;}
 
 function initJDate(input){
-  var hidden=document.getElementById('jdg_'+input.name);
+  /* فیلد مخفی میلادی، در همان کادر فیلد قرار دارد (برای فرم‌های متعدد با نام تکراری) */
+  var hidden=null;
+  var p=input.parentElement;
+  if(p) hidden=p.querySelector("input[name='"+input.name+"_g']");
+  if(!hidden) hidden=document.getElementById('jdg_'+input.name);
   function setFromJal(jy,jm,jd){
     var g=jalToGreg(jy,jm,jd);
     input.value=toFaDigits(jy+'/'+pad(jm)+'/'+pad(jd));
@@ -1325,10 +1333,10 @@ function page_create() {
     echo '</select></div>';
 
     /* طرف حساب */
-    /* مقدار اولیه طرف حساب: برای صادره پیش‌فرض تأمین‌کننده، برای دریافتی مشتری */
+    /* طرف حساب: هم برای صادره و هم دریافتی می‌تواند مشتری، تأمین‌کننده یا سایر باشد */
     $defaultParty = $direction === 'issued' ? 'supplier' : 'customer';
-    $partyLabel = $direction === 'received' ? 'صادرکننده چک (مشتری)' : 'ذی‌نفع (تأمین‌کننده)';
-    echo '<div><label>' . $partyLabel . '</label><select name="party_type" id="party_type">'
+    $partyLabel = $direction === 'received' ? 'صادرکننده / طرف حساب' : 'ذی‌نفع / طرف حساب';
+    echo '<div><label>' . $partyLabel . ' — نوع طرف</label><select name="party_type" id="party_type">'
        . '<option value="customer"' . ($defaultParty==='customer'?' selected':'') . '>مشتری</option>'
        . '<option value="supplier"' . ($defaultParty==='supplier'?' selected':'') . '>تأمین‌کننده</option>'
        . '<option value="other">سایر (نام دستی)</option></select></div>';
@@ -1338,7 +1346,7 @@ function page_create() {
     echo '<div id="party_sup"' . ($defaultParty!=='supplier'?' style="display:none"':'') . '><label>انتخاب تأمین‌کننده</label><select name="supplier_id"><option value="">—</option>';
     foreach ($suppliers as $s) echo '<option value="' . $s['id'] . '">' . e($s['name']) . '</option>';
     echo '</select></div>';
-    echo '<div><label>نام طرف (در صورت سایر)</label><input name="party_name"></div>';
+    echo '<div><label>نام طرف (در صورت «سایر»)</label><input name="party_name" placeholder="نام شخص/شرکت"></div>';
 
     if ($kind === 'payment') {
         jinput('issue_date', date('Y-m-d'), 'تاریخ صدور');
@@ -1596,25 +1604,31 @@ function page_banks() {
     echo '<div class="tablecard"><h4 style="margin:12px 0">حساب‌های ثبت‌شده (' . fa(count($banks)) . ')</h4>';
     if (!$banks) echo '<div class="muted" style="padding:20px;text-align:center">هنوز حسابی ثبت نشده — فرم پایین را پر کنید.</div>';
     else {
-        $labels = array('bank_name'=>'بانک','holder'=>'دارنده','account_no'=>'شماره حساب','card'=>'کارت','iban'=>'شبا','branch'=>'شعبه','balance'=>'مانده','currency'=>'ارز');
-        echo '<table><tr><th>#</th>';
-        foreach ($F as $role=>$col) { if ($col) echo '<th>' . $labels[$role] . '</th>'; }
-        /* سایر ستون‌های شناسایی‌نشده هم نمایش داده شوند */
-        $extra = array_values(array_diff($cols, array_values($used)));
-        foreach ($extra as $ec) { if (preg_match('/^(id|created_at|updated_at|deleted_at|user_id|company_id)$/i',$ec)) continue; echo '<th>' . e($ec) . '</th>'; }
+        $labels = array('bank_name'=>'بانک','holder'=>'دارنده حساب','account_no'=>'شماره حساب','card'=>'شماره کارت','iban'=>'شبا','branch'=>'شعبه','balance'=>'مانده','currency'=>'ارز');
+        $order  = array('bank_name','holder','account_no','card','iban','branch','balance','currency');
+        $shown  = array();
+        foreach ($order as $role) { if ($F[$role]) $shown[] = $role; }
+        echo '<div class="table-scroll"><table><tr><th>#</th>';
+        foreach ($shown as $role) { echo '<th>' . $labels[$role] . '</th>'; }
         echo '</tr>';
         foreach ($banks as $b) {
             echo '<tr><td>' . fa($b['id']) . '</td>';
-            foreach ($F as $role=>$col) {
-                if (!$col) continue;
-                $v = $b[$col] ?? null;
-                if ($role === 'balance' && $v !== null && $v !== '') $v = fa(number_format((float)$v)) . ' ' . e($b[$F['currency']] ?? '');
-                echo '<td>' . ($v === null || $v === '' ? '<span class="muted">—</span>' : e($v)) . '</td>';
+            foreach ($shown as $role) {
+                $col = $F[$role]; $v = $b[$col] ?? null;
+                if ($role === 'balance' && $v !== null && $v !== '') {
+                    $cur = $F['currency'] ? ($b[$F['currency']] ?? '') : '';
+                    $v = fa(number_format((float)$v)) . ($cur ? ' ' . e($cur) : '');
+                    echo '<td><b>' . $v . '</b></td>';
+                } else {
+                    echo '<td>' . ($v === null || $v === '' ? '<span class="muted">—</span>' : e($v)) . '</td>';
+                }
             }
-            foreach ($extra as $ec) { if (preg_match('/^(id|created_at|updated_at|deleted_at|user_id|company_id)$/i',$ec)) continue; echo '<td class="muted">' . e($b[$ec] ?? '—') . '</td>'; }
             echo '</tr>';
         }
-        echo '</table>';
+        echo '</table></div>';
+        if (!$F['bank_name']) {
+            echo '<div class="danger-box" style="margin-top:12px">ستون نام بانک در جدول bank_accounts شما شناسایی نشد؛ لطفاً خروجی اسکریپت recon_bank را بفرستید تا نگاشت دقیق شود.</div>';
+        }
     }
     echo '</div>';
 
