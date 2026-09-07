@@ -192,7 +192,8 @@ function jinput_html($name, $valueGreg, $label, $required = false) {
     return '<div class="jfield"><label>' . e($label) . ($required ? ' *' : '') . '</label>'
        . '<span class="jico">📅</span>'
        . '<input type="text" class="jdate" name="' . e($name) . '" id="jd_' . e($name) . '" value="' . e($jval) . '"'
-       . ' placeholder="مثلاً ۱۴۰۵/۰۶/۱۷" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
+       . ' placeholder="روی 📅 بزنید یا تایپ کنید: 1405/06/17" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
+       . '<div class="greg-hint" id="greg_' . e($name) . '"></div>'
        . '<input type="hidden" name="' . e($name) . '_g" id="jdg_' . e($name) . '" value="' . e($valueGreg ?: '') . '">'
        . '</div>';
 }
@@ -511,6 +512,48 @@ if (($_GET['api'] ?? '') === 'risk') {
     echo json_encode(array('ok'=>true, 'score'=>$r['score'], 'level'=>$r['level'],
         'total'=>$r['total'], 'bounced'=>$r['bounced'], 'overdue'=>$r['overdue'],
         'banned'=>$r['inquiry'] ? (int)$r['inquiry']['is_banned'] : 0, 'advice'=>$advice), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/* ------------------------------------------------------------------ API جستجوی اسناد */
+if (($_GET['api'] ?? '') === 'doc_search') {
+    header('Content-Type: application/json; charset=utf-8');
+    $map = array(
+        'invoice'        => array('invoices', 'فاکتور'),
+        'proforma'       => array('proforma_invoices', 'پیش‌فاکتور'),
+        'deal'           => array('deals', 'معامله'),
+        'purchase_order' => array('purchase_orders', 'سفارش خرید'),
+    );
+    $kind = $_GET['kind'] ?? '';
+    if (!isset($map[$kind])) { echo json_encode(array('ok'=>false)); exit; }
+    list($table, $kindLabel) = $map[$kind];
+    $q = trim((string)($_GET['q'] ?? ''));
+    $q = strtr($q, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9'));
+    $out = array();
+    try {
+        $numCol = pick_col($table, array('invoice_number','number','doc_number','code','reference','order_number','po_number','title'));
+        $amtCol = pick_col($table, array('total_amount','grand_total','total','amount','total_price','final_amount','price','value'));
+        $curCol = pick_col($table, array('currency','currency_code','cur'));
+        $partyCol = pick_col($table, array('customer_name','company_name','supplier_name','party_name','name','title'));
+        if (!$numCol) { echo json_encode(array('ok'=>false)); exit; }
+        $sql = "SELECT id, `$numCol` AS num" . ($amtCol ? ", `$amtCol` AS amt" : ', NULL AS amt')
+             . ($curCol ? ", `$curCol` AS cur" : ', NULL AS cur')
+             . ($partyCol ? ", `$partyCol` AS party" : ', NULL AS party')
+             . " FROM `$table` WHERE 1=1";
+        $args = array();
+        if ($q !== '') {
+            if (ctype_digit($q)) { $sql .= " AND (`$numCol` LIKE ? OR id=?)"; $args = array('%'.$q.'%', (int)$q); }
+            else { $sql .= " AND `$numCol` LIKE ?"; $args = array('%'.$q.'%'); }
+        }
+        $sql .= " ORDER BY id DESC LIMIT 15";
+        $rows = q_all($sql, $args);
+        foreach ($rows as $r) {
+            $out[] = array('id'=>(int)$r['id'], 'num'=>(string)$r['num'],
+                'amt'=>$r['amt']!==null ? (float)$r['amt'] : null,
+                'cur'=>$r['cur'] ?: '', 'party'=>(string)($r['party'] ?? ''), 'kind'=>$kindLabel);
+        }
+    } catch (Exception $ex) { echo json_encode(array('ok'=>false, 'err'=>$ex->getMessage())); exit; }
+    echo json_encode(array('ok'=>true, 'rows'=>$out), JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -913,6 +956,34 @@ function render_header($title) {
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
     .jfield{position:relative}
     .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
+    .greg-hint{font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:14px}
+    .greg-hint.empty{color:#cbd5e1;font-weight:600}
+    /* جستجوی سند */
+    .docpick{position:relative}
+    .docpick-results{position:absolute;z-index:9998;top:100%;left:0;right:0;background:#fff;border:1px solid #cbd5e1;border-radius:0 0 10px 10px;box-shadow:0 10px 26px rgba(15,35,71,.18);max-height:240px;overflow-y:auto;display:none}
+    .docpick-results .di{padding:8px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:12px}
+    .docpick-results .di:hover{background:#eff6ff}
+    .docpick-results .di b{color:#0f2347}
+    .docpick-results .di .damt{color:#15803d;font-weight:800}
+    .docchip{display:flex;align-items:center;gap:8px;background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;border-radius:9px;padding:8px 12px;margin-top:6px;font-size:12px;font-weight:700}
+    .docchip button{width:auto;padding:2px 10px;background:#dc2626;color:#fff;border:0;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px}
+    /* پیش‌نمایش زنده چک صیادی */
+    .sayyad-preview{margin-top:18px;background:linear-gradient(135deg,#f8fafc,#eef2ff);border:1px dashed #94a3b8;border-radius:16px;padding:18px}
+    .sayyad-preview h4{color:#0f2347;margin:0 0 10px;font-size:14px}
+    .cheque-paper{background:#fffdf5;border:2px solid #c9b896;border-radius:8px;padding:18px 20px;position:relative;max-width:760px;margin:0 auto;box-shadow:0 8px 22px rgba(15,35,71,.14);font-family:"Vazirmatn",Tahoma,sans-serif}
+    .cheque-paper .cp-top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #c9b896;padding-bottom:10px;margin-bottom:12px}
+    .cheque-paper .cp-bank{font-weight:800;color:#1d4ed8;font-size:17px}
+    .cheque-paper .cp-type{font-size:11px;color:#6b7280;letter-spacing:1px}
+    .cheque-paper .cp-nums{direction:ltr;text-align:left;font-size:12px;color:#374151;line-height:1.7}
+    .cheque-paper .cp-nums b{color:#0f2347}
+    .cheque-paper .cp-row{display:flex;gap:10px;align-items:flex-end;margin:10px 0;flex-wrap:wrap}
+    .cheque-paper .cp-line{flex:1;min-width:180px;border-bottom:1.5px solid #9ca3af;padding:2px 4px;font-size:14px;min-height:26px;color:#111827;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cheque-paper .cp-line small{display:block;font-size:10px;color:#6b7280;font-weight:600}
+    .cheque-paper .cp-amount{direction:ltr;text-align:left;font-weight:800;font-size:20px;color:#b91c1c;border-bottom:1.5px solid #9ca3af;padding:2px 6px;min-width:220px;min-height:30px}
+    .cheque-paper .cp-amount small{display:block;font-size:10px;color:#6b7280;font-weight:600;direction:rtl;text-align:right}
+    .cheque-paper .cp-words{border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;background:#fff;font-size:13px;font-weight:700;color:#0f2347;min-height:38px}
+    .cheque-paper .cp-ph{color:#cbd5e1;font-weight:600}
+    .cheque-paper .cp-sign{position:absolute;left:24px;bottom:14px;font-size:11px;color:#6b7280;border-top:1px solid #6b7280;padding-top:3px;min-width:130px;text-align:center}
     .jdate-wrap{position:relative}
     .jp-wrap{position:absolute;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 12px 32px rgba(15,35,71,.2);padding:10px;width:250px;direction:rtl}
     .jp-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:8px}
@@ -998,20 +1069,41 @@ var JMONTHS=['فروردین','اردیبهشت','خرداد','تیر','مردا
 var JDOW=['ش','ی','د','س','چ','پ','ج'];
 function pad(n){return (n<10?'0':'')+n;}
 
+function gregMonthsEn(){ return ['January','February','March','April','May','June','July','August','September','October','November','December']; }
+function formatGreg(g){
+  if(!g) return '';
+  return toFaDigits(g[2])+' '+gregMonthsEn()[g[1]-1]+' '+toFaDigits(g[0])+'  /  '+g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
+}
 function initJDate(input){
   /* فیلد مخفی میلادی، در همان کادر فیلد قرار دارد (برای فرم‌های متعدد با نام تکراری) */
-  var hidden=null;
+  var hidden=null, hint=null;
   var p=input.parentElement;
-  if(p) hidden=p.querySelector("input[name='"+input.name+"_g']");
+  if(p){
+    hidden=p.querySelector("input[name='"+input.name+"_g']");
+    hint=p.querySelector('.greg-hint');
+  }
   if(!hidden) hidden=document.getElementById('jdg_'+input.name);
+  if(!hint) hint=document.getElementById('greg_'+input.name);
+  function showHint(){
+    if(!hint) return;
+    if(hidden && hidden.value && /^\d{4}-\d{2}-\d{2}$/.test(hidden.value)){
+      var pa=hidden.value.split('-');
+      hint.textContent='برابر میلادی: '+formatGreg([+pa[0],+pa[1],+pa[2]]);
+      hint.classList.remove('empty');
+    } else {
+      hint.textContent='معادل میلادی زیر تاریخ نشان داده می‌شود';
+      hint.classList.add('empty');
+    }
+  }
   function setFromJal(jy,jm,jd){
     var g=jalToGreg(jy,jm,jd);
     input.value=toFaDigits(jy+'/'+pad(jm)+'/'+pad(jd));
     if(hidden) hidden.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
+    showHint();
   }
   function parseInput(){
     var t=toEnDigits(input.value||'').trim().replace(/\s/g,'');
-    var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\$/);
+    var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
     if(m) return [+m[1],+m[2],+m[3]];
     return null;
   }
@@ -1019,11 +1111,12 @@ function initJDate(input){
     var parts=hidden.value.split('-');
     if(parts.length===3){ var j=gregToJal(+parts[0],+parts[1],+parts[2]); input.value=toFaDigits(j[0]+'/'+pad(j[1])+'/'+pad(j[2])); }
   }
+  showHint();
   var box=null;
   function closeBox(){ if(box){ box.remove(); box=null; } }
   function jalLeap(jy){ var r=((jy-474)%2820+2820)%2820; return ((r+474+38)*682)%2816<682; }
   function openBox(){
-    closeBox();
+    if(box) return;
     var cur=parseInput();
     var today=gregToJal(new Date().getFullYear(),new Date().getMonth()+1,new Date().getDate());
     var jy=cur?cur[0]:today[0], jm=cur?cur[1]:today[1], jd=cur?cur[2]:today[2];
@@ -1034,7 +1127,7 @@ function initJDate(input){
       var firstDay=new Date(g0[0],g0[1]-1,g0[2]);
       var lead=(firstDay.getDay()+1)%7;
       var dim = jm<=6 ? 31 : (jm<=11 ? 30 : (jalLeap(jy)?30:29));
-      var html='<div class="jp-head"><button type="button" id="jpy-">◀</button><div><span id="jpym">'+JMONTHS[jm-1]+' '+toFaDigits(jy)+'</span></div><button type="button" id="jpy+">▶</button></div>';
+      var html='<div class="jp-head"><button type="button" id="jpy-">▶</button><div><span id="jpym">'+JMONTHS[jm-1]+' '+toFaDigits(jy)+'</span></div><button type="button" id="jpy+">◀</button></div>';
       html+='<div class="jp-grid">';
       for(var d=0;d<7;d++) html+='<div class="dow">'+JDOW[d]+'</div>';
       for(var i=0;i<lead;i++) html+='<div class="empty"></div>';
@@ -1044,23 +1137,34 @@ function initJDate(input){
         if(cur&&jy===cur[0]&&jm===cur[1]&&day===cur[2]) cls+=' sel';
         html+='<div class="'+cls+'" data-d="'+day+'">'+toFaDigits(day)+'</div>';
       }
-      html+='</div>';
+      html+='</div><div style="text-align:center;margin-top:6px"><button type="button" id="jptoday" style="width:100%;background:#eff6ff;border:0;color:#1d4ed8;border-radius:6px;padding:5px;cursor:pointer;font-weight:700;font-family:inherit">امروز</button></div>';
       box.innerHTML=html;
       box.querySelector('#jpy-').onclick=function(){ jm--; if(jm<1){jm=12;jy--;} render(); };
       box.querySelector('#jpy+').onclick=function(){ jm++; if(jm>12){jm=1;jy++;} render(); };
+      box.querySelector('#jptoday').onclick=function(){ setFromJal(today[0],today[1],today[2]); closeBox(); input.dispatchEvent(new Event('change')); };
       box.querySelectorAll('.day').forEach(function(el){
+        el.onmousedown=function(ev){ ev.preventDefault(); };
         el.onclick=function(){ setFromJal(jy,jm,+el.getAttribute('data-d')); closeBox(); input.dispatchEvent(new Event('change')); };
       });
       var r=input.getBoundingClientRect();
-      box.style.top=Math.round(window.scrollY+r.bottom+4)+'px';
+      var top=Math.round(window.scrollY+r.bottom+4);
+      /* اگر پایین صفحه جا نبود، بالای فیلد باز کن */
+      if(r.bottom+300 > window.innerHeight) top=Math.round(window.scrollY+r.top-300-4);
+      box.style.top=top+'px';
       box.style.left=Math.round(window.scrollX+r.left)+'px';
     }
     render();
+    /* بستن با کلیک بیرون تقویم (به‌جای blur که با کلیک روز تداخل داشت) */
+    setTimeout(function(){
+      document.addEventListener('mousedown',function h(ev){
+        if(box && !box.contains(ev.target) && ev.target!==input){ closeBox(); document.removeEventListener('mousedown',h); }
+      });
+    },0);
   }
   input.addEventListener('focus',openBox);
   input.addEventListener('click',openBox);
-  input.addEventListener('change',function(){ var p=parseInput(); if(p) setFromJal(p[0],p[1],p[2]); });
-  input.addEventListener('blur',function(){ setTimeout(closeBox,200); });
+  input.addEventListener('input',function(){ var pr=parseInput(); if(pr) setFromJal(pr[0],pr[1],pr[2]); else { if(hidden) hidden.value=''; showHint(); } });
+  input.addEventListener('change',function(){ var pr=parseInput(); if(pr) setFromJal(pr[0],pr[1],pr[2]); });
   document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeBox(); });
 }
 
@@ -1165,9 +1269,116 @@ function refreshRisk(){
   }).catch(()=>{ box.style.display='none'; });
 }
 
+/* ====================== جستجوی سند/فاکتور ====================== */
+var docState={timer:null};
+function fmtDocAmt(r){
+  if(r.amt===null||r.amt===undefined) return 'مبلغ ثبت‌نشده';
+  var s=toFaDigits(String(Math.round(r.amt)).replace(/\B(?=(\d{3})+(?!\d))/g,','));
+  return 'مبلغ: '+s+(r.cur?(' '+r.cur):'');
+}
+function docSearch(){
+  var kind=document.getElementById('doc_type');
+  var q=document.getElementById('doc_q');
+  var res=document.getElementById('doc_results');
+  if(!kind||!q||!res) return;
+  if(!kind.value){ res.innerHTML='<div class="di muted">اول نوع سند را انتخاب کنید…</div>'; res.style.display='block'; return; }
+  var term=q.value.trim();
+  if(term.length<1){ res.style.display='none'; return; }
+  res.innerHTML='<div class="di muted">در حال جستجو…</div>'; res.style.display='block';
+  fetch('cheques.php?api=doc_search&kind='+encodeURIComponent(kind.value)+'&q='+encodeURIComponent(term))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(!d.ok||!d.rows||!d.rows.length){ res.innerHTML='<div class="di muted">سندی پیدا نشد — شماره/نوع را بررسی کنید</div>'; return; }
+      res.innerHTML='';
+      d.rows.forEach(function(r){
+        var di=document.createElement('div'); di.className='di';
+        di.innerHTML='<b>'+r.kind+' #'+(r.num||r.id)+'</b> '+(r.party?(' · '+r.party):'')+' <span class="damt" style="float:left">'+fmtDocAmt(r)+'</span>';
+        di.onmousedown=function(ev){ ev.preventDefault(); };
+        di.onclick=function(){ docPick(r,kind.options[kind.selectedIndex].text); };
+        res.appendChild(di);
+      });
+    }).catch(function(){ res.innerHTML='<div class="di muted">خطا در جستجو</div>'; });
+}
+function docPick(r,kindLabel){
+  document.getElementById('ref_type').value=document.getElementById('doc_type').value;
+  document.getElementById('ref_id').value=r.id;
+  document.getElementById('doc_results').style.display='none';
+  document.getElementById('doc_q').value='';
+  var chip=document.getElementById('doc_chip');
+  chip.innerHTML='<div class="docchip">✅ متصل به: '+kindLabel+' #'+(r.num||r.id)+(r.party?(' — '+r.party):'')
+    +' <span style="margin-right:auto">'+fmtDocAmt(r)+'</span><button type="button" onclick="docClear()">× حذف اتصال</button></div>';
+}
+function docClear(){
+  document.getElementById('ref_type').value='';
+  document.getElementById('ref_id').value='';
+  document.getElementById('doc_chip').innerHTML='';
+}
+function initDocPick(){
+  var kind=document.getElementById('doc_type');
+  var q=document.getElementById('doc_q');
+  var res=document.getElementById('doc_results');
+  if(!kind||!q) return;
+  kind.addEventListener('change',function(){ res.style.display='none'; if(q.value.trim()) docSearch(); });
+  q.addEventListener('input',function(){ clearTimeout(docState.timer); docState.timer=setTimeout(docSearch,250); });
+  q.addEventListener('keydown',function(ev){ if(ev.key==='Enter'){ ev.preventDefault(); docSearch(); } });
+  q.addEventListener('focus',function(){ if(q.value.trim()) docSearch(); });
+  document.addEventListener('mousedown',function(ev){
+    if(res && !document.getElementById('docpick').contains(ev.target)) res.style.display='none';
+  });
+}
+
+/* ====================== پیش‌نمایش زنده چک صیادی ====================== */
+function cpEl(id){ return document.getElementById(id); }
+function cpText(id,txt,ph){ var el=cpEl(id); if(!el) return; el.innerHTML=txt?txt:('<span class="cp-ph">'+ph+'</span>'); }
+function updateChequePreview(){
+  if(!cpEl('cheque_preview')) return;
+  /* مبلغ */
+  var amt=document.getElementById('amount_toman');
+  var raw=amt?toEnDigits(amt.value).replace(/[^0-9]/g,''):'';
+  cpText('cp_amount', raw?toFaDigits(raw.replace(/\B(?=(\d{3})+(?!\d))/g,',')):'', '0');
+  cpText('cp_words', raw?(faNumWords(parseInt(raw,10))+' تومان'):'', 'مبلغ چک به حروف اینجا نوشته می‌شود…');
+  /* شماره چک */
+  var cn=document.getElementById('cheque_number');
+  cpText('cp_cheque', cn&&cn.value.trim()?toFaDigits(cn.value.trim()):'', '_ _ _ _ _ _');
+  /* صیاد */
+  var sy=document.getElementsByName('sayyad_id')[0];
+  if(sy && sy.value.trim()){ cpText('cp_sayyad', toFaDigits(sy.value.trim().replace(/[^0-9]/g,''))); }
+  else cpText('cp_sayyad','','_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _');
+  /* بانک */
+  var bk=document.getElementsByName('bank_name')[0];
+  cpText('cp_bank', bk&&bk.value.trim()?bk.value.trim():'', 'بانک …');
+  /* تاریخ سرصدور */
+  var due=document.querySelector("input[name='due_date']");
+  var iss=document.querySelector("input[name='issue_date']");
+  var grt=document.querySelector("input[name='guarantee_return_date']");
+  var dt=due||grt||iss;
+  cpText('cp_date', dt&&dt.value.trim()?dt.value.trim():'', '۱۴۰_/__/__');
+  /* ذی‌نفع */
+  var pt=document.getElementById('party_type');
+  var payee='';
+  if(pt){
+    if(pt.value==='customer'){ var c=document.getElementById('customer_id'); if(c&&c.selectedIndex>0) payee=c.options[c.selectedIndex].text; }
+    else if(pt.value==='supplier'){ var s=document.getElementById('supplier_id'); if(s&&s.selectedIndex>0) payee=s.options[s.selectedIndex].text; }
+  }
+  var pn=document.getElementById('party_name');
+  if(!payee && pn && pn.value.trim()) payee=pn.value.trim();
+  cpText('cp_payee', payee, 'نام ذی‌نفع / صادرکننده…');
+}
+function initChequePreview(){
+  if(!cpEl('cheque_preview')) return;
+  var ids=['amount_toman','cheque_number','party_name','party_type','customer_id','supplier_id'];
+  ids.forEach(function(id){ var el=document.getElementById(id); if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
+  ['sayyad_id','bank_name'].forEach(function(nm){ var el=document.getElementsByName(nm)[0]; if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
+  /* تاریخ‌ها: بعد از تغییر مقدار مخفی میلادی توسط تقویم */
+  setInterval(updateChequePreview, 400);
+  updateChequePreview();
+}
+
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('.jdate').forEach(initJDate);
   document.querySelectorAll('.amount-input').forEach(initAmount);
+  initDocPick();
+  initChequePreview();
   var pt=document.getElementById('party_type');
   if(pt){
     pt.dispatchEvent(new Event('change'));
@@ -1434,13 +1645,57 @@ function page_create() {
     }
     echo '<div><label>اسکن روی چک</label><input type="file" name="image_front" accept="image/*,.pdf"></div>';
     echo '<div><label>اسکن پشت چک</label><input type="file" name="image_back" accept="image/*,.pdf"></div>';
-    echo '<div style="grid-column:1/-1"><label>توضیحات / اتصال به سند (نوع و شماره فاکتور، سفارش خرید...)</label>
-        <div style="display:flex;gap:6px"><select name="ref_type" style="max-width:170px"><option value="">سند</option>
-        <option value="invoice">فاکتور</option><option value="proforma">پیش‌فاکتور</option><option value="deal">معامله</option>
-        <option value="purchase_order">سفارش خرید</option></select>
-        <input name="ref_id" placeholder="شماره/ID سند" style="max-width:140px"></div></div>';
+    echo '<div style="grid-column:1/-1"><label>🔗 اتصال به سند (جستجوی فاکتور/پیش‌فاکتور/معامله/سفارش خرید — مبلغ سند هم نمایش داده می‌شود)</label>
+        <div class="docpick" id="docpick">
+          <div style="display:flex;gap:6px">
+            <select id="doc_type" style="max-width:170px">
+              <option value="">نوع سند…</option>
+              <option value="invoice">فاکتور</option>
+              <option value="proforma">پیش‌فاکتور</option>
+              <option value="deal">معامله</option>
+              <option value="purchase_order">سفارش خرید</option>
+            </select>
+            <input id="doc_q" placeholder="شماره سند را تایپ کنید (یا بخشی از آن)…" autocomplete="off" style="flex:1">
+          </div>
+          <input type="hidden" name="ref_type" id="ref_type">
+          <input type="hidden" name="ref_id" id="ref_id">
+          <div class="docpick-results" id="doc_results"></div>
+          <div id="doc_chip"></div>
+        </div></div>';
     echo '<div style="grid-column:1/-1"><label>توضیحات</label><textarea name="description" rows="2"></textarea></div>';
     echo '</div>';
+
+    /* ---------- پیش‌نمایش زنده چک صیادی ---------- */
+    echo '<div class="sayyad-preview"><h4>🧾 پیش‌نمایش زنده چک — همزمان با پر کردن فرم، چک را ببینید و کنترل کنید</h4>
+      <div class="cheque-paper" id="cheque_preview">
+        <div class="cp-top">
+          <div>
+            <div class="cp-bank" id="cp_bank"><span class="cp-ph">بانک …</span></div>
+            <div class="cp-type">BANK TEJARAT · چک صیادی (نمونه پیش‌نمایش)</div>
+          </div>
+          <div class="cp-nums" dir="ltr">
+            <div>کد ملی صادرکننده: <b id="cp_national">—</b></div>
+            <div>شناسه صیاد (۱۶ رقمی): <b id="cp_sayyad"><span class="cp-ph">_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _</span></b></div>
+            <div>شماره چک: <b id="cp_cheque"><span class="cp-ph">_ _ _ _ _ _</span></b></div>
+          </div>
+        </div>
+        <div class="cp-row">
+          <div style="min-width:220px"><small style="font-size:10px;color:#6b7280;font-weight:700">تاریخ چک (شمسی)</small>
+            <div class="cp-line" id="cp_date" dir="ltr"><span class="cp-ph">۱۴۰_/__/__</span></div></div>
+          <div style="flex:2"><small style="font-size:10px;color:#6b7280;font-weight:700">در وجه:</small>
+            <div class="cp-line" id="cp_payee"><span class="cp-ph">نام ذی‌نفع / صادرکننده…</span></div></div>
+        </div>
+        <div class="cp-row">
+          <div style="flex:1"><small style="font-size:10px;color:#6b7280;font-weight:700">مبلغ به حروف:</small>
+            <div class="cp-words" id="cp_words"><span class="cp-ph">مبلغ چک به حروف اینجا نوشته می‌شود…</span></div></div>
+          <div><small style="font-size:10px;color:#6b7280;font-weight:700">مبلغ به ریال/تومان:</small>
+            <div class="cp-amount" id="cp_amount" dir="ltr"><span class="cp-ph">0</span><small>تومان</small></div></div>
+        </div>
+        <div class="cp-sign">امضا / مهر صادرکننده</div>
+      </div>
+      <div class="muted" style="text-align:center;margin-top:8px">این فقط پیش‌نمایش کنترلی است و روی چک واقعی شما چاپ نمی‌شود.</div>
+    </div>';
+
     echo '<button class="btn btn-primary" style="margin-top:14px">💾 ثبت چک</button>';
     echo '</form>';
 
