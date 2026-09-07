@@ -158,6 +158,30 @@ $ddl[] = "CREATE TABLE IF NOT EXISTS `check_endorsements` (
   KEY `idx_check` (`check_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci";
 
+$ddl[] = "CREATE TABLE IF NOT EXISTS `check_inquiries` (
+  `id` BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  `check_id` BIGINT UNSIGNED NULL,
+  `party_type` ENUM('customer','supplier','other') NOT NULL DEFAULT 'other',
+  `party_id` BIGINT UNSIGNED NULL,
+  `party_name` VARCHAR(200) NULL,
+  `sayyad_id` VARCHAR(20) NULL,
+  `bank_name` VARCHAR(100) NULL,
+  `sms_number` VARCHAR(20) NULL,
+  `channel` ENUM('sms','app','api','manual') NOT NULL DEFAULT 'sms',
+  `raw_response` TEXT NULL,
+  `parsed_status` VARCHAR(40) NULL,
+  `bounced_count` INT NULL DEFAULT 0,
+  `bounced_amount` DECIMAL(20,0) NULL DEFAULT 0,
+  `is_banned` TINYINT(1) NOT NULL DEFAULT 0,
+  `risk_score` TINYINT NULL,
+  `risk_level` ENUM('low','medium','high') NULL,
+  `note` VARCHAR(255) NULL,
+  `inquired_by` BIGINT UNSIGNED NULL,
+  `inquired_at` DATETIME NULL,
+  KEY `idx_check` (`check_id`),
+  KEY `idx_party` (`party_type`,`party_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci";
+
 foreach ($ddl as $sql) {
     preg_match('/EXISTS\s+`?(\w+)`?/i', $sql, $mm);
     $tname = $mm[1] ?? '?';
@@ -176,6 +200,24 @@ try {
         } else { ok('ستون check_id از قبل وجود دارد'); }
     } else { warn('جدول bank_transactions وجود ندارد — از افزودن ستون صرف‌نظر شد'); }
 } catch (PDOException $e) { warn('bank_transactions/check_id: ' . $e->getMessage()); }
+
+/* فیلدهای چرخه صیاد روی checks (idempotent) */
+$addCols = array(
+    'checks' => array(
+        "sayyad_status VARCHAR(30) NULL",
+        "sayyad_registered_at DATETIME NULL",
+        "sayyad_confirmed_at DATETIME NULL",
+    ),
+);
+foreach ($addCols as $tbl => $defs) {
+    foreach ($defs as $def) {
+        $col = trim(strtok($def, ' '));
+        try {
+            $exists = $pdo->query("SHOW COLUMNS FROM `$tbl` LIKE " . $pdo->quote($col))->fetchColumn();
+            if (!$exists) { $pdo->exec("ALTER TABLE `$tbl` ADD COLUMN $def"); ok("ستون $col به $tbl اضافه شد"); }
+        } catch (PDOException $e) { warn("$tbl.$col: " . $e->getMessage()); }
+    }
+}
 
 /* ---------- ثبت مهاجرت ---------- */
 step(4, 'ثبت نسخه در schema_migrations');

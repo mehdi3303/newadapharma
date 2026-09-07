@@ -158,6 +158,30 @@ $ddl[] = "CREATE TABLE IF NOT EXISTS `check_endorsements` (
   KEY `idx_check` (`check_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci";
 
+$ddl[] = "CREATE TABLE IF NOT EXISTS `check_inquiries` (
+  `id` BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+  `check_id` BIGINT UNSIGNED NULL,
+  `party_type` ENUM('customer','supplier','other') NOT NULL DEFAULT 'other',
+  `party_id` BIGINT UNSIGNED NULL,
+  `party_name` VARCHAR(200) NULL,
+  `sayyad_id` VARCHAR(20) NULL,
+  `bank_name` VARCHAR(100) NULL,
+  `sms_number` VARCHAR(20) NULL,
+  `channel` ENUM('sms','app','api','manual') NOT NULL DEFAULT 'sms',
+  `raw_response` TEXT NULL,
+  `parsed_status` VARCHAR(40) NULL,
+  `bounced_count` INT NULL DEFAULT 0,
+  `bounced_amount` DECIMAL(20,0) NULL DEFAULT 0,
+  `is_banned` TINYINT(1) NOT NULL DEFAULT 0,
+  `risk_score` TINYINT NULL,
+  `risk_level` ENUM('low','medium','high') NULL,
+  `note` VARCHAR(255) NULL,
+  `inquired_by` BIGINT UNSIGNED NULL,
+  `inquired_at` DATETIME NULL,
+  KEY `idx_check` (`check_id`),
+  KEY `idx_party` (`party_type`,`party_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci";
+
 foreach ($ddl as $sql) {
     preg_match('/EXISTS\s+`?(\w+)`?/i', $sql, $mm);
     $tname = $mm[1] ?? '?';
@@ -176,6 +200,24 @@ try {
         } else { ok('ستون check_id از قبل وجود دارد'); }
     } else { warn('جدول bank_transactions وجود ندارد — از افزودن ستون صرف‌نظر شد'); }
 } catch (PDOException $e) { warn('bank_transactions/check_id: ' . $e->getMessage()); }
+
+/* فیلدهای چرخه صیاد روی checks (idempotent) */
+$addCols = array(
+    'checks' => array(
+        "sayyad_status VARCHAR(30) NULL",
+        "sayyad_registered_at DATETIME NULL",
+        "sayyad_confirmed_at DATETIME NULL",
+    ),
+);
+foreach ($addCols as $tbl => $defs) {
+    foreach ($defs as $def) {
+        $col = trim(strtok($def, ' '));
+        try {
+            $exists = $pdo->query("SHOW COLUMNS FROM `$tbl` LIKE " . $pdo->quote($col))->fetchColumn();
+            if (!$exists) { $pdo->exec("ALTER TABLE `$tbl` ADD COLUMN $def"); ok("ستون $col به $tbl اضافه شد"); }
+        } catch (PDOException $e) { warn("$tbl.$col: " . $e->getMessage()); }
+    }
+}
 
 /* ---------- ثبت مهاجرت ---------- */
 step(4, 'ثبت نسخه در schema_migrations');
@@ -487,7 +529,8 @@ $STATUS_META = array(
 /* رویدادهای مجاز هر وضعیت: event_type => [برچسب، وضعیت مقصد، حساس؟] */
 $TRANSITIONS = array(
     'received|payment' => array(
-        'in_hand'   => array('deposit' => array('سپرده به بانک', 'deposited', false),
+        'in_hand'   => array('sayyad_confirm' => array('تأیید در صیاد (تا ۴۸ ساعت)', 'in_hand', false),
+                             'deposit' => array('سپرده به بانک', 'deposited', false),
                              'endorse' => array('خرج/انتقال چک', 'endorsed', true),
                              'cancel'  => array('ابطال چک', 'cancelled', true),
                              'replace' => array('جایگزینی با چک جدید', 'replaced', true)),
@@ -498,7 +541,8 @@ $TRANSITIONS = array(
                              'cancel'  => array('ابطال چک', 'cancelled', true)),
     ),
     'issued|payment' => array(
-        'issued'  => array('pass'    => array('ثبت پاس‌شدن (کسر از حساب)', 'passed', true),
+        'issued'  => array('sayyad_register' => array('ثبت در صیاد (قبل از تحویل)', 'issued', false),
+                           'pass'    => array('ثبت پاس‌شدن (کسر از حساب)', 'passed', true),
                            'bounce'  => array('ثبت برگشت چک', 'bounced', true),
                            'cancel'  => array('ابطال چک', 'cancelled', true),
                            'replace' => array('جایگزینی/تمدید', 'replaced', true)),
@@ -523,7 +567,121 @@ $EVENT_LABELS = array(
     'bounce' => 'برگشت', 'endorse' => 'خرج/انتقال', 'cancel' => 'ابطال',
     'replace' => 'جایگزینی', 'pass' => 'پاس‌شدن', 'g_return' => 'استرداد وثیقه',
     'forfeit' => 'ضبط وثیقه', 'note' => 'یادداشت',
+    'sayyad_register' => 'ثبت در صیاد', 'sayyad_confirm' => 'تأیید در صیاد',
 );
+
+/* ---------- استعلام صیاد ---------- */
+/* شماره پیامک استعلام بانک‌ها (نمونه/قابل ویرایش توسط کاربر در فرم) */
+$BANK_SMS = array(
+    'ملت'      => array('num' => '700700', 'note' => 'استعلام وضعیت چک از طریق سامانه بانک ملت'),
+    'صادرات'   => array('num' => '60060',  'note' => 'بانک صادرات ایران'),
+    'ملی'      => array('num' => '700070', 'note' => 'بانک ملی ایران'),
+    'سپه'      => array('num' => '60000',  'note' => 'بانک سپه'),
+    'تجارت'    => array('num' => '70070',  'note' => 'بانک تجارت'),
+    'رفاه'     => array('num' => '70080',  'note' => 'بانک رفاه کارگران'),
+    'پارسیان'  => array('num' => '7008',   'note' => 'بانک پارسیان'),
+    'پاسارگاد' => array('num' => '70000',  'note' => 'بانک پاسارگاد'),
+    'سامان'    => array('num' => '700700', 'note' => 'بانک سامان'),
+    'آینده'    => array('num' => '70070',  'note' => 'بانک آینده'),
+    'کشاورزی'  => array('num' => '600060', 'note' => 'بانک کشاورزی'),
+    'مسکن'     => array('num' => '700080', 'note' => 'بانک مسکن'),
+    'شهر'      => array('num' => '70007',  'note' => 'بانک شهر'),
+);
+
+/* نرمال‌سازی متن برای پارس */
+function inquiry_norm($t) {
+    $t = (string)$t;
+    $t = strtr($t, array('ي'=>'ی','ك'=>'ک','‌'=>' '));
+    $t = str_replace(array('۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'),
+                     array('0','1','2','3','4','5','6','7','8','9'), $t);
+    return ' ' . $t . ' ';
+}
+function fa_contains($norm, $words) { foreach ($words as $w) { if (mb_strpos($norm, $w) !== false) return true; } return false; }
+
+/* پارس هوشمند متن پاسخ استعلام */
+function inquiry_parse($raw) {
+    $norm = inquiry_norm($raw);
+    $r = array('status'=>null, 'bounced_count'=>0, 'bounced_amount'=>null, 'is_banned'=>0, 'found'=>false);
+
+    /* محرومیت از دسته‌چک */
+    if (fa_contains($norm, array('محروم','ممنوع از دسته چک','فاقد دسته چک','عدم صدور دسته چک','مسدودی چک','ممنوعیت دسته چک'))) {
+        $r['is_banned'] = 1; $r['found'] = true;
+    }
+    /* تعداد برگشتی */
+    if (preg_match('/(\d+)\s*(?:فقره|عدد|برگ)?\s*چک\s*(?:برگشتی|برگشت|بلامحل)/u', $norm, $m) ||
+        preg_match('/(?:تعداد|به تعداد)\s*(\d+)\s*(?:فقره|عدد|برگ)?/u', $norm, $m)) {
+        $r['bounced_count'] = (int)$m[1]; $r['found'] = true;
+    }
+    /* مبلغ برگشتی */
+    if (preg_match('/([\d\.,]{3,})\s*(?:میلیون|میلیارد)?\s*(تومان|ریال|میلیون تومان|میلیارد تومان|میلیون ریال)/u', $norm, $m)) {
+        $num = (float)str_replace(array(',', '،'), '', $m[1]);
+        if (mb_strpos($m[0], 'میلیارد') !== false) $num *= 1e6 * 10;       /* میلیارد تومان → ریال */
+        elseif (mb_strpos($m[0], 'میلیون') !== false && mb_strpos($m[0],'ریال')!==false) $num *= 1e6;
+        elseif (mb_strpos($m[0], 'میلیون') !== false) $num *= 1e4 * 10;   /* میلیون تومان → ریال */
+        $r['bounced_amount'] = $num; $r['found'] = true;
+    }
+    /* وضعیت چک */
+    if (fa_contains($norm, array('برگشت','بلا محل','بلامحل','برگشتی'))) { $r['status'] = 'bounced'; $r['found'] = true; }
+    elseif (fa_contains($norm, array('وصول','پاس شد','پاس شد','کار سازی','وصول شد'))) { $r['status'] = 'cleared'; $r['found'] = true; }
+    elseif (fa_contains($norm, array('رد','تایید نشد','تأیید نشد'))) { $r['status'] = 'rejected'; $r['found'] = true; }
+    elseif (fa_contains($norm, array('تایید شد','تأیید شد'))) { $r['status'] = 'confirmed'; $r['found'] = true; }
+    elseif (fa_contains($norm, array('ثبت شد','در انتظار تایید','در انتظار تأیید'))) { $r['status'] = 'registered'; $r['found'] = true; }
+    elseif (fa_contains($norm, array('فاقد سابقه','سابقه ای ندارد','سابقه‌ای ندارد','بدون چک برگشتی','بدون سابقه'))) { $r['status'] = 'clean'; $r['found'] = true; }
+    return $r;
+}
+
+/* محاسبه ریسک‌اسکور طرف حساب (0-100، بالاتر=بدتر) از داده‌های داخلی + آخرین استعلام */
+function party_risk($type, $id, $name = null) {
+    $type = in_array($type, array('customer','supplier'), true) ? $type : null;
+    $where = "deleted_at IS NULL AND kind='payment'";
+    $args = array();
+    if ($type === 'customer') { $where .= " AND party_type='customer' AND customer_id=?"; $args[] = $id; }
+    elseif ($type === 'supplier') { $where .= " AND party_type='supplier' AND supplier_id=?"; $args[] = $id; }
+    else { $where .= " AND party_name=?"; $args[] = $name; }
+
+    $agg = q_one("SELECT
+        COUNT(*) AS total,
+        SUM(status='bounced') AS bounced,
+        SUM(status='issued' AND due_date < CURDATE()) AS overdue_open,
+        AVG(CASE WHEN status='cleared' THEN DATEDIFF(COALESCE((
+                SELECT MAX(event_date) FROM check_events e WHERE e.check_id=checks.id AND e.event_type='clear'), CURDATE()), due_date) END) AS avg_delay
+        FROM checks WHERE $where", $args);
+
+    $total   = (int)($agg['total'] ?? 0);
+    $bounced = (int)($agg['bounced'] ?? 0);
+    $overdue = (int)($agg['overdue_open'] ?? 0);
+    $delay   = (float)($agg['avg_delay'] ?? 0);
+    if ($delay < 0) $delay = 0;
+
+    /* آخرین استعلام همان طرف */
+    $q = "SELECT is_banned, bounced_count, bounced_amount FROM check_inquiries WHERE 1=1";
+    $qa = array();
+    if ($type === 'customer') { $q .= " AND party_type='customer' AND party_id=?"; $qa[] = $id; }
+    elseif ($type === 'supplier') { $q .= " AND party_type='supplier' AND party_id=?"; $qa[] = $id; }
+    else { $q .= " AND party_name=?"; $qa[] = $name; }
+    $q .= " ORDER BY id DESC LIMIT 1";
+    $inq = null;
+    try { $inq = q_one($q, $qa); } catch (Exception $e) {}
+
+    $score = 0;
+    if ($total > 0) $score += ($bounced / $total) * 45;
+    $score += min($overdue, 3) * 8;
+    $score += min($delay / 5, 1) * 12;
+    if ($inq) {
+        if ((int)($inq['is_banned'] ?? 0)) $score += 40;
+        $score += min((int)($inq['bounced_count'] ?? 0), 6) * 5;
+    }
+    $score = (int)round(max(0, min(100, $score)));
+    $level = $score >= 55 ? 'high' : ($score >= 25 ? 'medium' : 'low');
+    $data = $total + ((int)($inq['bounced_count'] ?? 0));
+    return array('score'=>$score, 'level'=>$level, 'total'=>$total, 'bounced'=>$bounced,
+                 'overdue'=>$overdue, 'avg_delay'=>$delay, 'inquiry'=>$inq, 'data_points'=>$data);
+}
+function risk_badge($level, $score) {
+    if ($level === 'high') return '<span class="tag tag-red">ریسک بالا · ' . fa($score) . '/100</span>';
+    if ($level === 'medium') return '<span class="tag tag-yellow">ریسک متوسط · ' . fa($score) . '/100</span>';
+    return '<span class="tag tag-green">ریسک کم · ' . fa($score) . '/100</span>';
+}
 
 /* ------------------------------------------------------------------ آپلود */
 function upload_cheque_file($field, $prefix) {
@@ -585,6 +743,22 @@ function apply_event($eventId) {
         db()->prepare("UPDATE checks SET status=?, updated_at=NOW() WHERE id=?")->execute(array($to, $chk['id']));
     }
     return true;
+}
+
+/* ------------------------------------------------------------------ API خوشه‌ای (JSON) */
+if (($_GET['api'] ?? '') === 'risk') {
+    header('Content-Type: application/json; charset=utf-8');
+    $pt = in_array($_GET['party_type'] ?? '', array('customer','supplier'), true) ? $_GET['party_type'] : 'other';
+    $pid = (int)($_GET['party_id'] ?? 0);
+    $pname = trim((string)($_GET['party_name'] ?? ''));
+    if (!$pid && $pname === '') { echo json_encode(array('ok'=>false)); exit; }
+    $r = party_risk($pt === 'other' ? null : $pt, $pid ?: null, $pname ?: null);
+    $advice = $r['level']==='high' ? 'هشدار: ریسک بالا — چک ضامن یا پیش‌پرداخت بگیرید.'
+            : ($r['level']==='medium' ? 'احتیاط: بهتر است تضمین بیشتری بگیرید.' : 'سوابق رضایت‌بخش است.');
+    echo json_encode(array('ok'=>true, 'score'=>$r['score'], 'level'=>$r['level'],
+        'total'=>$r['total'], 'bounced'=>$r['bounced'], 'overdue'=>$r['overdue'],
+        'banned'=>$r['inquiry'] ? (int)$r['inquiry']['is_banned'] : 0, 'advice'=>$advice), JSON_UNESCAPED_UNICODE);
+    exit;
 }
 
 /* ------------------------------------------------------------------ POST */
@@ -719,6 +893,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: cheques.php?p=detail&id=' . $ev['check_id']);
             exit;
         }
+    }
+
+    if ($action === 'inquiry') {
+        $checkId = (int)($_POST['check_id'] ?? 0);
+        $chk = $checkId ? q_one("SELECT * FROM checks WHERE id=? AND deleted_at IS NULL", array($checkId)) : null;
+        $raw = trim((string)($_POST['raw_response'] ?? ''));
+        $bank = trim((string)($_POST['bank_name'] ?? '')) ?: ($chk['bank_name'] ?? '');
+        $sms  = trim((string)($_POST['sms_number'] ?? ''));
+        $channel = in_array($_POST['channel'] ?? 'sms', array('sms','app','api','manual'), true) ? $_POST['channel'] : 'sms';
+
+        if ($raw === '' && $channel !== 'manual') {
+            flash('پاسخ استعلام را وارد کنید (یا حالت «بدون پاسخ/دستی» را انتخاب کنید).');
+        } else {
+            $parsed = inquiry_parse($raw);
+            $ptype = $chk['party_type'] ?? in_array($_POST['party_type'] ?? '', array('customer','supplier','other'), true) ? ($_POST['party_type'] ?? 'other') : 'other';
+            $ptype = is_array($ptype) ? 'other' : $ptype;
+            $pid = $chk ? ($chk['party_type']==='customer' ? $chk['customer_id'] : ($chk['party_type']==='supplier' ? $chk['supplier_id'] : null)) : (int)($_POST['party_id'] ?? 0);
+            $pname = $chk['party_name'] ?? trim((string)($_POST['party_name'] ?? ''));
+            $risk = party_risk($ptype === 'other' ? null : $ptype, $pid ?: null, $pname ?: null);
+            db()->prepare("INSERT INTO check_inquiries
+                (check_id, party_type, party_id, party_name, sayyad_id, bank_name, sms_number, channel,
+                 raw_response, parsed_status, bounced_count, bounced_amount, is_banned, risk_score, risk_level, inquired_by, inquired_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())")
+                ->execute(array(
+                    $checkId ?: null, $ptype, $pid ?: null, $pname ?: null,
+                    $chk['sayyad_id'] ?? trim((string)($_POST['sayyad_id'] ?? '')) ?: null,
+                    $bank ?: null, $sms ?: null, $channel,
+                    $raw ?: null, $parsed['status'], (int)$parsed['bounced_count'], $parsed['bounced_amount'],
+                    (int)$parsed['is_banned'], $risk['score'], $risk['level'], $me['id']));
+            flash('✅ استعلام ثبت شد — ' . risk_badge($risk['level'], $risk['score']));
+        }
+        header('Location: cheques.php?p=detail&id=' . $checkId);
+        exit;
+    }
+
+    if ($action === 'sayyad') {
+        $checkId = (int)($_POST['check_id'] ?? 0);
+        $what = $_POST['what'] ?? '';  /* register | confirm */
+        $chk = q_one("SELECT * FROM checks WHERE id=? AND deleted_at IS NULL", array($checkId));
+        if ($chk) {
+            if ($what === 'register') {
+                db()->prepare("UPDATE checks SET sayyad_status='registered', sayyad_registered_at=NOW(), updated_at=NOW() WHERE id=?")->execute(array($checkId));
+                record_event($checkId, 'sayyad_register', date('Y-m-d'), null, trim((string)($_POST['sayyad_ref'] ?? '')) ?: null, 'ثبت چک در سامانه صیاد', null, false);
+                flash('✅ ثبت چک در صیاد انجام شد.');
+            } elseif ($what === 'confirm') {
+                db()->prepare("UPDATE checks SET sayyad_status='confirmed', sayyad_confirmed_at=NOW(), updated_at=NOW() WHERE id=?")->execute(array($checkId));
+                record_event($checkId, 'sayyad_confirm', date('Y-m-d'), null, trim((string)($_POST['sayyad_ref'] ?? '')) ?: null, 'تأیید دریافت چک در صیاد', null, false);
+                flash('✅ تأیید چک در صیاد ثبت شد.');
+            }
+        }
+        header('Location: cheques.php?p=detail&id=' . $checkId);
+        exit;
     }
 
     if ($action === 'checkbook') {
@@ -983,8 +1209,11 @@ function render_header($title) {
     foreach (get_flash() as $f) { echo '<div class="flash">' . e($f) . '</div>'; }
 }
 function render_footer() {
-echo <<<'JS'
+global $BANK_SMS;
+$smsJson = json_encode(array_map(function($v){return $v['num'];}, $BANK_SMS), JSON_UNESCAPED_UNICODE);
+echo <<<JS
 <script>
+var BANK_SMS_MAP = {$smsJson};
 /* ====================== توابع تاریخ شمسی (Jalali) ====================== */
 function toEnDigits(s){return (s||'').replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d));}
 function toFaDigits(s){return (s||'').replace(/\d/g,d=>'۰۱۲۳۴۵۶۷۸۹'[d]);}
@@ -1029,7 +1258,7 @@ function initJDate(input){
   }
   function parseInput(){
     var t=toEnDigits(input.value||'').trim().replace(/\s/g,'');
-    var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    var m=t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\$/);
     if(m) return [+m[1],+m[2],+m[3]];
     return null;
   }
@@ -1143,12 +1372,60 @@ document.addEventListener('change',function(ev){
   }
 });
 
+/* استعلام: به‌روزرسانی شماره پیامک با انتخاب بانک */
+function bankSmsChange(){
+  var sel=document.getElementById('inq_bank'); if(!sel) return;
+  var bank=sel.value, info=BANK_SMS_MAP[bank]||{};
+  var n=document.getElementById('inq_smsnum'); if(n) n.value=info.num||'';
+  var n2=document.getElementById('inq_smsnum2'); if(n2) n2.value=info.num||'';
+  var bn=document.getElementById('inq_bankname'); if(bn) bn.value=bank;
+}
+function copySms(){
+  var el=document.getElementById('sms_text'); if(!el) return;
+  var t=el.textContent.trim();
+  if(navigator.clipboard){ navigator.clipboard.writeText(t); } else {
+    var ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select();
+    try{document.execCommand('copy');}catch(e){} document.body.removeChild(ta);
+  }
+  alert('متن کپی شد');
+}
+
+/* ریسک لحظه‌ای طرف حساب در فرم ثبت چک */
+function refreshRisk(){
+  var box=document.getElementById('riskbox'); if(!box) return;
+  var pt=document.getElementById('party_type'); if(!pt) return;
+  var type=pt.value, pid='', name='';
+  if(type==='customer'){ var c=document.getElementById('customer_id'); pid=c?c.value:''; }
+  else if(type==='supplier'){ var s=document.getElementById('supplier_id'); pid=s?s.value:''; }
+  else { var n=document.getElementById('party_name'); name=n?n.value.trim():''; }
+  if(!pid && !name){ box.style.display='none'; return; }
+  var url='cheques.php?api=risk&party_type='+encodeURIComponent(type)+'&party_id='+encodeURIComponent(pid)+'&party_name='+encodeURIComponent(name);
+  box.style.display='block'; box.innerHTML='<div class="muted">در حال محاسبه ریسک...</div>';
+  fetch(url).then(r=>r.json()).then(d=>{
+    if(!d.ok){ box.style.display='none'; return; }
+    var col = d.level==='high' ? '#dc2626' : (d.level==='medium' ? '#ca8a04' : '#16a34a');
+    box.innerHTML='<div class="card" style="border-right:4px solid '+col+'">'
+      + '<b>🧮 امتیاز اعتبار طرف: '+toFaDigits(d.score)+'/100</b> '
+      + (d.banned? ' <span class="tag tag-red">محروم از دسته‌چک!</span>' : '')
+      + '<div class="muted" style="margin-top:4px">چک‌های ثبت‌شده: '+toFaDigits(d.total||0)+' · برگشتی: '+toFaDigits(d.bounced||0)+' · باز سررسید: '+toFaDigits(d.overdue||0)+'</div>'
+      + '<div style="margin-top:6px;color:'+col+';font-weight:700">'+d.advice+'</div></div>';
+  }).catch(()=>{ box.style.display='none'; });
+}
+
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('.jdate').forEach(initJDate);
   document.querySelectorAll('.amount-input').forEach(initAmount);
-  /* وضعیت اولیه بخش طرف حساب */
   var pt=document.getElementById('party_type');
-  if(pt){ pt.dispatchEvent(new Event('change')); }
+  if(pt){
+    pt.dispatchEvent(new Event('change'));
+    ['party_type','customer_id','supplier_id','party_name'].forEach(function(id){
+      var el=document.getElementById(id);
+      if(el) el.addEventListener('change',refreshRisk);
+    });
+    var pn=document.getElementById('party_name');
+    if(pn) pn.addEventListener('blur',refreshRisk);
+    refreshRisk();
+  }
 });
 </script>
 JS;
@@ -1193,6 +1470,38 @@ function page_dashboard() {
         echo '<div class="danger-box">🚨 <b>هشدار بحرانی:</b> ' . fa($overIssued['c']) . ' فقره چک صادره به مبلغ '
            . '<b>' . money($overIssued['s']) . '</b> سررسیدش گذشته و هنوز پاس نشده — خطر برگشت چک شرکت!</div>';
     }
+
+    /* هشدار صیاد: چک دریافتی که هنوز در صیاد تأیید نشده (مهلت ۴۸ ساعت) */
+    try {
+        $unconf = q_all("SELECT id, cheque_number, party_name, created_at FROM checks
+                         WHERE kind='payment' AND direction='received' AND status='in_hand'
+                         AND deleted_at IS NULL AND COALESCE(sayyad_status,'') <> 'confirmed' LIMIT 20");
+        if ($unconf) {
+            echo '<div class="danger-box" style="background:#fffbeb;border-color:#fcd34d;color:#92400e">⏰ <b>یادآور صیاد:</b> '
+               . fa(count($unconf)) . ' فقره چک دریافتی هنوز در صیاد <b>تأیید</b> نشده — '
+               . 'برای جلوگیری از ابطال/عدم وصول، ظرف ۴۸ ساعت پس از دریافت اقدام کنید.'
+               . '<div class="muted" style="margin-top:4px">' . implode('، ', array_map(function($x){ return '<a href="cheques.php?p=detail&id='.$x['id'].'">چک '.e($x['cheque_number']?:('#'.$x['id'])).'</a>'; }, array_slice($unconf,0,5))) . '</div></div>';
+        }
+    } catch (Exception $e) {}
+
+    /* هشدار ریسک: استعلام‌های پرریسک/محروم */
+    try {
+        $hi = q_all("SELECT i.*, c.cheque_number FROM check_inquiries i
+                     LEFT JOIN checks c ON c.id=i.check_id
+                     WHERE i.risk_level='high' OR i.is_banned=1
+                     ORDER BY i.id DESC LIMIT 5");
+        if ($hi) {
+            echo '<div class="danger-box">🛑 <b>هشدار ریسک:</b> ' . fa(count($hi)) . ' مورد استعلام پرریسک/محروم ثبت شده — '
+               . 'قبل از قبول/تحویل چک حتماً بررسی شود.';
+            foreach ($hi as $h) {
+                echo '<div class="muted" style="margin-top:2px">· ' . e($h['party_name'] ?: '—')
+                   . ($h['cheque_number'] ? ' (چک ' . e($h['cheque_number']) . ')' : '')
+                   . ($h['is_banned'] ? ' — <b style="color:#b91c1c">محروم از دسته‌چک</b>' : '')
+                   . ($h['check_id'] ? ' <a href="cheques.php?p=detail&id=' . $h['check_id'] . '">مشاهده</a>' : '') . '</div>';
+            }
+            echo '</div>';
+        }
+    } catch (Exception $e) {}
 
     /* هشدار کسری موجودی به تفکیک بانک */
     echo '<div class="card"><h4>پیش‌بینی کسری موجودی حساب‌ها (چک‌های صادره ۳۰ روز آینده)</h4>';
@@ -1343,13 +1652,14 @@ function page_create() {
        . '<option value="customer"' . ($defaultParty==='customer'?' selected':'') . '>مشتری</option>'
        . '<option value="supplier"' . ($defaultParty==='supplier'?' selected':'') . '>تأمین‌کننده</option>'
        . '<option value="other">سایر (نام دستی)</option></select></div>';
-    echo '<div id="party_cust"' . ($defaultParty!=='customer'?' style="display:none"':'') . '><label>انتخاب مشتری</label><select name="customer_id"><option value="">—</option>';
+    echo '<div id="party_cust"' . ($defaultParty!=='customer'?' style="display:none"':'') . '><label>انتخاب مشتری</label><select name="customer_id" id="customer_id"><option value="">—</option>';
     foreach ($customers as $c) echo '<option value="' . $c['id'] . '">' . e($c['name']) . '</option>';
     echo '</select></div>';
-    echo '<div id="party_sup"' . ($defaultParty!=='supplier'?' style="display:none"':'') . '><label>انتخاب تأمین‌کننده</label><select name="supplier_id"><option value="">—</option>';
+    echo '<div id="party_sup"' . ($defaultParty!=='supplier'?' style="display:none"':'') . '><label>انتخاب تأمین‌کننده</label><select name="supplier_id" id="supplier_id"><option value="">—</option>';
     foreach ($suppliers as $s) echo '<option value="' . $s['id'] . '">' . e($s['name']) . '</option>';
     echo '</select></div>';
-    echo '<div><label>نام طرف (در صورت «سایر»)</label><input name="party_name" placeholder="نام شخص/شرکت"></div>';
+    echo '<div><label>نام طرف (در صورت «سایر»)</label><input name="party_name" id="party_name" placeholder="نام شخص/شرکت"></div>';
+    echo '<div id="riskbox" style="grid-column:1/-1;display:none"></div>';
 
     if ($kind === 'payment') {
         jinput('issue_date', date('Y-m-d'), 'تاریخ صدور');
@@ -1435,6 +1745,73 @@ function page_detail() {
                 echo '</figure>';
             }
         }
+        echo '</div></div>';
+    }
+
+    /* ---- استعلام صیاد (چک دریافتی) ---- */
+    if ($c['direction'] === 'received' && $c['kind'] === 'payment') {
+        echo '<div class="card" style="margin-top:14px"><h4>🔍 استعلام صیاد / سابقه صادرکننده</h4>';
+        if ($c['sayyad_status'] === null) {
+            echo '<div class="danger-box" style="margin-bottom:10px">⚠️ چک دریافتی باید تا <b>۴۸ ساعت پس از دریافت</b> در صیاد تأیید شود؛ وگرنه قابل وصول/انتقال نیست.</div>';
+        } else {
+            echo '<div class="muted" style="margin-bottom:10px">وضعیت صیاد: <b>' . e($c['sayyad_status']) . '</b></div>';
+        }
+        echo '<details style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px">
+            <summary style="cursor:pointer;font-weight:700">📲 استعلام از بانک (پیامک/اپ) — نمایش شماره و متن آماده</summary>';
+        $bankKey = null;
+        global $BANK_SMS;
+        foreach ($BANK_SMS as $bk=>$bv) { if ($c['bank_name'] && mb_strpos($c['bank_name'], $bk) !== false) { $bankKey = $bk; break; } }
+        echo '<div class="form-grid" style="margin-top:10px">
+            <div><label>بانک صادرکننده</label><select id="inq_bank" onchange="bankSmsChange()">';
+        foreach ($BANK_SMS as $bk=>$bv) echo '<option value="' . e($bk) . '"' . ($bankKey===$bk?' selected':'') . '>' . e($bk) . '</option>';
+        echo '</select></div>
+            <div><label>شماره پیامک استعلام</label><input id="inq_smsnum" readonly value="' . e($bankKey ? $BANK_SMS[$bankKey]['num'] : reset($BANK_SMS)['num']) . '"></div>
+            </div>';
+        echo '<div style="margin:10px 0" class="muted">متن پیشنهادی (شناسه صیاد را جایگزین کنید):
+            <div id="sms_text" dir="ltr" style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:8px;margin-top:6px;text-align:left">ESTELAM ' . e($c['sayyad_id'] ?: '[SAYYAD_16]') . '</div>
+            <button type="button" class="btn btn-gray btn-sm" onclick="copySms()">کپی متن</button>
+            <a class="btn btn-gray btn-sm" target="_blank" id="sms_link" href="sms:?body=ESTELAM%20' . e($c['sayyad_id'] ?: '') . '">باز کردن پیامک‌رسان</a></div>';
+        echo '<div class="muted" style="color:#b91c1c">⚠️ شماره‌های پیامک نمونه‌اند؛ حتماً با بانک صادرکننده تطبیق دهید.</div>';
+        echo '</details>';
+
+        echo '<details style="border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-top:10px" open>
+            <summary style="cursor:pointer;font-weight:700">📥 پاسخ بانک را اینجا بچسبانید (تحلیل خودکار)</summary>
+            <form method="post" style="margin-top:10px">' . csrf_field() . '
+            <input type="hidden" name="action" value="inquiry"><input type="hidden" name="check_id" value="' . $c['id'] . '">
+            <input type="hidden" name="bank_name" id="inq_bankname" value="' . e($c['bank_name'] ?: '') . '">
+            <label>متن پاسخ پیامک/اپ</label><textarea name="raw_response" rows="3" placeholder="متن پاسخ استعلام را اینجا بچسبانید..."></textarea>
+            <input type="hidden" name="sms_number" id="inq_smsnum2" value=""><input type="hidden" name="channel" value="sms">
+            <button class="btn btn-primary" style="margin-top:8px">تحلیل و ثبت استعلام</button></form></details>';
+
+        /* آخرین استعلام‌ها */
+        $inqs = q_all("SELECT * FROM check_inquiries WHERE check_id=? ORDER BY id DESC LIMIT 3", array($c['id']));
+        if ($inqs) {
+            echo '<table style="margin-top:12px"><tr><th>تاریخ</th><th>وضعیت</th><th>برگشتی</th><th>ریسک</th></tr>';
+            foreach ($inqs as $iq) {
+                echo '<tr><td>' . jdate($iq['inquired_at']) . '</td><td>' . e($iq['parsed_status'] ?: '—') . '</td>'
+                   . '<td>' . fa((int)$iq['bounced_count']) . ' فقره' . ($iq['is_banned'] ? ' · <span class="tag tag-red">محروم</span>' : '') . '</td>'
+                   . '<td>' . ($iq['risk_level'] ? risk_badge($iq['risk_level'], $iq['risk_score']) : '—') . '</td></tr>';
+            }
+            echo '</table>';
+        }
+        echo '</div>';
+    }
+
+    /* ---- دکمه‌های چرخه صیاد ---- */
+    $sayyadNeeded = ($c['kind']==='payment' && !$c['locked_at']);
+    if ($sayyadNeeded) {
+        echo '<div class="card" style="margin-top:14px"><h4>📝 اقدام‌های صیاد</h4><div style="display:flex;gap:8px;flex-wrap:wrap">';
+        if ($c['direction']==='issued' && $c['sayyad_status'] !== 'registered' && $c['sayyad_status'] !== 'confirmed') {
+            echo '<form method="post" style="display:inline">' . csrf_field()
+               . '<input type="hidden" name="action" value="sayyad"><input type="hidden" name="check_id" value="' . $c['id'] . '"><input type="hidden" name="what" value="register">'
+               . '<button class="btn btn-primary btn-sm">ثبت چک در صیاد (قبل از تحویل)</button></form>';
+        }
+        if ($c['direction']==='received' && $c['sayyad_status'] !== 'confirmed') {
+            echo '<form method="post" style="display:inline">' . csrf_field()
+               . '<input type="hidden" name="action" value="sayyad"><input type="hidden" name="check_id" value="' . $c['id'] . '"><input type="hidden" name="what" value="confirm">'
+               . '<button class="btn btn-green btn-sm">تأیید دریافت چک در صیاد</button></form>';
+        }
+        echo '<span class="muted" style="align-self:center">وضعیت فعلی: ' . e($c['sayyad_status'] ?: 'ثبت‌نشده') . '</span>';
         echo '</div></div>';
     }
 
