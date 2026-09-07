@@ -531,42 +531,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'bank') {
         try {
-            $cols = db()->query("SHOW COLUMNS FROM bank_accounts")->fetchAll(PDO::FETCH_COLUMN);
-            $set = array(); $par = array();
-            $map = array(
-                'bank_name'      => array('bank_name','bank','title','name','account_name'),
-                'account_name'   => array('account_holder','account_holder_name','holder','account_title','owner'),
-                'account_number' => array('account_number','account_no','number','account_num'),
-                'card_number'    => array('card_number','card','card_num'),
-                'iban'           => array('iban','shaba','sheba','iban_number'),
-                'branch_name'    => array('branch','branch_name','bank_branch'),
-                'currency'       => array('currency','curr'),
-                'balance'        => array('balance','current_balance','account_balance','available_balance','opening_balance','initial_balance'),
+            $formMap = array(
+                'bank_name'      => trim((string)($_POST['bank_name'] ?? '')),
+                'holder'         => trim((string)($_POST['account_name'] ?? '')),
+                'account_no'     => trim((string)($_POST['account_number'] ?? '')),
+                'card'           => trim((string)($_POST['card_number'] ?? '')),
+                'iban'           => trim((string)($_POST['iban'] ?? '')),
+                'branch'         => trim((string)($_POST['branch_name'] ?? '')),
+                'balance'        => trim((string)($_POST['balance'] ?? '')),
             );
-            foreach ($map as $formKey => $cands) {
-                foreach ($cands as $c) {
-                    if (in_array($c, $cols, true)) {
-                        if (isset($_POST[$formKey]) && trim((string)$_POST[$formKey]) !== '') {
-                            $val = $_POST[$formKey];
-                            if ($formKey === 'balance') { $val = (float)str_replace(array(',', '،'), '', (string)$val); /* تومان */ $val = $val * 10; }
-                            elseif ($formKey === 'currency' && $val === '') { $val = 'IRR'; }
-                            $set[$c] = $val;
-                        }
-                        break;
-                    }
+            $set = array();
+            foreach ($formMap as $role => $val) {
+                if ($val === '') continue;
+                $col = bank_field($role);
+                if (!$col) continue;
+                if ($role === 'balance') { $val = (float)str_replace(array(',', '،'), '', $val); }
+                $set[$col] = $val;
+            }
+            /* ارز پیش‌فرض */
+            $curCol = bank_field('currency');
+            if ($curCol && !isset($set[$curCol])) $set[$curCol] = 'IRR';
+            foreach (array('status'=>'active','is_active'=>1,'active'=>1) as $c=>$dv) {
+                if (in_array($c, bank_cols(), true) && !isset($set[$c])) $set[$c] = $dv;
+            }
+            if (empty($set) || !bank_field('bank_name')) {
+                flash('ساختار جدول bank_accounts قابل تطبیق نیست؛ لطفاً خروجی اسکریپت recon_bank را بفرستید.');
+            } else {
+                if (!isset($set[ bank_field('bank_name') ])) {
+                    flash('نام بانک ذخیره نشد (ستون نام پیدا نشد). خروجی recon_bank را بفرستید.');
+                } else {
+                    $colsSql = implode(',', array_map(function($k){return "`$k`";}, array_keys($set)));
+                    $ph = implode(',', array_fill(0, count($set), '?'));
+                    db()->prepare("INSERT INTO bank_accounts ($colsSql) VALUES ($ph)")->execute(array_values($set));
+                    flash('✅ حساب بانکی ثبت شد.');
                 }
-            }
-            /* کلیدهای رایجی که مقدار پیش‌فرض می‌خواهند */
-            foreach (array('currency'=>'IRR','status'=>'active','is_active'=>1) as $c => $dv) {
-                if (in_array($c, $cols, true) && !array_key_exists($c, $set) && !isset($set[$c])) { $set[$c] = $dv; }
-            }
-            if (isset($set['name']) && !isset($set['bank_name'])) { /* بانک بدون نام نگذرد */ }
-            if (empty($set)) { flash('ساختار جدول bank_accounts قابل تطبیق نیست؛ خروجی cols&t=bank_accounts را بفرستید.'); }
-            else {
-                $colsSql = implode(',', array_map(function($k){return "`$k`";}, array_keys($set)));
-                $ph = implode(',', array_fill(0, count($set), '?'));
-                db()->prepare("INSERT INTO bank_accounts ($colsSql) VALUES ($ph)")->execute(array_values($set));
-                flash('✅ حساب بانکی ثبت شد.');
             }
         } catch (Exception $ex) { flash('خطا در ثبت حساب: ' . $ex->getMessage()); }
         header('Location: cheques.php?p=banks');
@@ -583,6 +581,32 @@ function bank_accounts() {
     $sql = "SELECT id, `$nameCol` AS bank_name" . ($numCol ? ", `$numCol` AS account_no" : ', NULL AS account_no')
          . ($balCol ? ", `$balCol` AS balance" : ', NULL AS balance') . " FROM bank_accounts";
     return q_all($sql);
+}
+/* تشخیص هوشمند ستون جدول bank_accounts بر اساس نقش (الگومند) */
+function bank_cols() {
+    static $cols = null;
+    if ($cols === null) {
+        try { $cols = db()->query("SHOW COLUMNS FROM bank_accounts")->fetchAll(PDO::FETCH_COLUMN); }
+        catch (Exception $e) { $cols = array(); }
+    }
+    return $cols;
+}
+function bank_field($role) {
+    $roles = array(
+        'bank_name'  => array('/bank.*name/','/^(bank|title|name)$/'),
+        'holder'     => array('/holder|owner|in_?name|account_?name|company|title/'),
+        'account_no' => array('/account_?(no|num|number)/','/^(number|account)$/'),
+        'card'       => array('/card/'),
+        'iban'       => array('/iban|shaba|sheba/'),
+        'branch'     => array('/branch/'),
+        'currency'   => array('/curr/'),
+        'balance'    => array('/balance|opening|initial|cash|credit|remaining|amount/'),
+    );
+    if (!isset($roles[$role])) return null;
+    foreach ($roles[$role] as $pat) {
+        foreach (bank_cols() as $c) { if (preg_match($pat, $c)) return $c; }
+    }
+    return null;
 }
 function parties($type) {
     $table = $type === 'customer' ? 'customers' : 'suppliers';
@@ -1347,29 +1371,43 @@ function page_reports() {
 /* ---------- حساب‌های بانکی ---------- */
 function page_banks() {
     render_header('حساب‌های بانکی');
-    $nameCol  = pick_col('bank_accounts', array('bank_name','bank','title','name'));
-    $holderCol= pick_col('bank_accounts', array('account_holder','account_holder_name','holder','account_title','owner'));
-    $numCol   = pick_col('bank_accounts', array('account_number','account_no','number','account_num'));
-    $cardCol  = pick_col('bank_accounts', array('card_number','card','card_num'));
-    $ibanCol  = pick_col('bank_accounts', array('iban','shaba','sheba','iban_number'));
-    $branchCol= pick_col('bank_accounts', array('branch','branch_name','bank_branch'));
-    $balCol   = pick_col('bank_accounts', array('balance','current_balance','account_balance','available_balance','opening_balance','initial_balance'));
-    $curCol   = pick_col('bank_accounts', array('currency','curr'));
+    $F = array(
+        'bank_name'  => bank_field('bank_name'),
+        'holder'     => bank_field('holder'),
+        'account_no' => bank_field('account_no'),
+        'card'       => bank_field('card'),
+        'iban'       => bank_field('iban'),
+        'branch'     => bank_field('branch'),
+        'balance'    => bank_field('balance'),
+        'currency'   => bank_field('currency'),
+    );
+    $cols = bank_cols();
+    $used = array_filter($F);
+    $banks = q_all("SELECT * FROM bank_accounts ORDER BY id DESC");
 
-    $banks = $nameCol ? q_all("SELECT * FROM bank_accounts ORDER BY id DESC") : array();
+    echo '<div class="hero blue"><span class="hico">🏦</span><div class="hbody"><h2>حساب‌های بانکی</h2>'
+       . '<div class="hsub">مدیریت حساب‌ها، شماره‌ها و مانده‌ها برای چک‌های صادره و وصولی</div></div></div>';
 
-    echo '<div class="card"><h4>حساب‌های ثبت‌شده (' . fa(count($banks)) . ')</h4>';
-    if (!$banks) echo '<div class="muted">هنوز حسابی ثبت نشده — فرم پایین را پر کنید.</div>';
+    echo '<div class="tablecard"><h4 style="margin:12px 0">حساب‌های ثبت‌شده (' . fa(count($banks)) . ')</h4>';
+    if (!$banks) echo '<div class="muted" style="padding:20px;text-align:center">هنوز حسابی ثبت نشده — فرم پایین را پر کنید.</div>';
     else {
-        echo '<table><tr><th>بانک</th><th>دارنده حساب</th><th>شماره حساب</th><th>کارت</th><th>شبا</th><th>شعبه</th><th>مانده (تومان)</th></tr>';
+        $labels = array('bank_name'=>'بانک','holder'=>'دارنده','account_no'=>'شماره حساب','card'=>'کارت','iban'=>'شبا','branch'=>'شعبه','balance'=>'مانده','currency'=>'ارز');
+        echo '<table><tr><th>#</th>';
+        foreach ($F as $role=>$col) { if ($col) echo '<th>' . $labels[$role] . '</th>'; }
+        /* سایر ستون‌های شناسایی‌نشده هم نمایش داده شوند */
+        $extra = array_values(array_diff($cols, array_values($used)));
+        foreach ($extra as $ec) { if (preg_match('/^(id|created_at|updated_at|deleted_at|user_id|company_id)$/i',$ec)) continue; echo '<th>' . e($ec) . '</th>'; }
+        echo '</tr>';
         foreach ($banks as $b) {
-            echo '<tr><td>' . e($b[$nameCol] ?? '—') . '</td>'
-               . '<td>' . e($b[$holderCol] ?? '—') . '</td>'
-               . '<td>' . e($b[$numCol] ?? '—') . '</td>'
-               . '<td>' . e($b[$cardCol] ?? '—') . '</td>'
-               . '<td>' . e($b[$ibanCol] ?? '—') . '</td>'
-               . '<td>' . e($b[$branchCol] ?? '—') . '</td>'
-               . '<td>' . ($balCol && isset($b[$balCol]) ? fa(number_format((float)$b[$balCol]/10)) : '<span class="muted">—</span>') . '</td></tr>';
+            echo '<tr><td>' . fa($b['id']) . '</td>';
+            foreach ($F as $role=>$col) {
+                if (!$col) continue;
+                $v = $b[$col] ?? null;
+                if ($role === 'balance' && $v !== null && $v !== '') $v = fa(number_format((float)$v)) . ' ' . e($b[$F['currency']] ?? '');
+                echo '<td>' . ($v === null || $v === '' ? '<span class="muted">—</span>' : e($v)) . '</td>';
+            }
+            foreach ($extra as $ec) { if (preg_match('/^(id|created_at|updated_at|deleted_at|user_id|company_id)$/i',$ec)) continue; echo '<td class="muted">' . e($b[$ec] ?? '—') . '</td>'; }
+            echo '</tr>';
         }
         echo '</table>';
     }
@@ -1386,9 +1424,9 @@ function page_banks() {
     echo '<div><label>شماره کارت</label><input name="card_number" inputmode="numeric" maxlength="20"></div>';
     echo '<div><label>شبا (IBAN)</label><input name="iban" placeholder="IR..."></div>';
     echo '<div><label>شعبه</label><input name="branch_name"></div>';
-    echo '<div><label>مانده فعلی (تومان)</label><input name="balance" class="amount-input" inputmode="numeric" autocomplete="off"><div class="amount-words"></div></div>';
+    echo '<div><label>مانده فعلی (همان واحد ذخیره سیستم)</label><input name="balance" class="amount-input" inputmode="numeric" autocomplete="off"><div class="amount-words"></div></div>';
     echo '</div><button class="btn btn-primary" style="margin-top:12px">💾 ثبت حساب</button>';
-    echo '<div class="muted" style="margin-top:8px">فقط فیلدهایی که با ساختار جدول bank_accounts شما بخوانند ذخیره می‌شوند؛ مبلغ به تومان وارد و خودکار به ریال ذخیره می‌شود.</div>';
+    echo '<div class="muted" style="margin-top:8px">فیلدها به‌صورت خودکار با ستون‌های جدول bank_accounts شما تطبیق داده می‌شوند.</div>';
     echo '</form>';
     render_footer();
 }
