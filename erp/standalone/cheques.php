@@ -112,6 +112,12 @@ function csrf_check() {
 /* ------------------------------------------------------------------ کمکی‌ها */
 function e($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function fa($s) { return str_replace(range(0, 9), array('۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'), (string)$s); }
+/* خواندن امن پارامتر GET (هشدار Undefined array key ندهد) */
+function g($key, $default = '') {
+    if (!is_array($_GET)) return $default;
+    if (!array_key_exists($key, $_GET) || $_GET[$key] === null || $_GET[$key] === '') return $default;
+    return $_GET[$key];
+}
 /* مبالغ داخلی همه «ریال» ذخیره می‌شوند؛ نمایش به «تومان» است. */
 function money($n) { return fa(number_format((float)$n / 10)) . ' تومان'; }
 
@@ -638,9 +644,37 @@ function render_header($title) {
     @media(max-width:820px){ .sidebar{position:fixed;z-index:50;transform:translateX(100%);transition:.2s} .sidebar.open{transform:none} .menu-toggle{display:inline-block!important} }
     .menu-toggle{display:none;background:var(--navy);color:#fff;border:0;border-radius:8px;padding:7px 12px;font-size:16px;cursor:pointer}
 
+    /* هیرو گرادینت (مثل صفحات ERP) */
+    .hero{border-radius:16px;padding:26px 30px;color:#fff;display:flex;align-items:center;gap:18px;margin-bottom:20px;box-shadow:0 6px 18px rgba(16,35,71,.12)}
+    .hero.green{background:linear-gradient(135deg,#16a34a,#0f9d8f)}
+    .hero.blue{background:linear-gradient(135deg,#2563eb,#1e40af)}
+    .hero.navy{background:linear-gradient(135deg,#1f3563,#0f2347)}
+    .hero.purple{background:linear-gradient(135deg,#7c3aed,#5b21b6)}
+    .hero .hico{font-size:34px}
+    .hero .hbody{flex:1}
+    .hero h2{margin:0;font-size:24px;font-weight:800}
+    .hero .hsub{margin-top:4px;font-size:13px;opacity:.92}
+    .hero .hbtn{background:#fff;color:#0f172a;border-radius:10px;padding:11px 22px;font-weight:800;font-size:13px;display:inline-flex;gap:6px;align-items:center}
+    .hero .hbtn:hover{text-decoration:none;transform:translateY(-1px)}
+
     .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:18px}
+    /* کارت آماری با نوار رنگی بالا */
+    .stat{background:#fff;border:1px solid var(--card-border);border-radius:14px;padding:16px 18px;border-top:3px solid #2563eb;box-shadow:0 1px 2px rgba(16,35,71,.04)}
+    .stat.g{border-top-color:#16a34a}.stat.b{border-top-color:#2563eb}.stat.p{border-top-color:#7c3aed}.stat.o{border-top-color:#f59e0b}.stat.r{border-top-color:#dc2626}.stat.c{border-top-color:#0891b2}
+    .stat .lab{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.4px}
+    .stat .val{font-size:24px;font-weight:800;margin-top:6px}
+    .stat .vsub{font-size:12px;color:var(--muted);margin-top:4px}
     .card{background:#fff;border:1px solid var(--card-border);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(16,35,71,.04)}
     .card h4{margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:700}
+    /* قرص‌های فیلتر */
+    .pills{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    .pill{display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--card-border);border-radius:999px;padding:8px 18px;font-weight:700;font-size:13px;color:#475569}
+    .pill:hover{text-decoration:none;border-color:#cbd5e1}
+    .pill.active{background:#16a34a;color:#fff;border-color:#16a34a}
+    .pill .n{background:#eef2f7;border-radius:999px;padding:0 9px;font-size:11px;font-weight:800;color:#475569}
+    .pill.active .n{background:rgba(255,255,255,.25);color:#fff}
+    .tablecard{background:#fff;border:1px solid var(--card-border);border-radius:14px;padding:6px 16px 16px;box-shadow:0 1px 2px rgba(16,35,71,.04)}
+    .tablecard table{border-radius:10px}
     .card .big{font-size:22px;font-weight:800} .card .sub{color:var(--muted);font-size:12px;margin-top:4px}
     table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden}
     th,td{padding:10px 12px;border-bottom:1px solid #eef1f4;text-align:right;font-size:13px}
@@ -902,13 +936,17 @@ function page_dashboard() {
     $guar    = $stat("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM checks WHERE kind='guarantee' AND status='held' AND deleted_at IS NULL");
     $pending = $stat("SELECT COUNT(*) c FROM check_events WHERE approval_status='pending'");
 
+    echo '<div class="hero blue"><span class="hico">🏦</span><div class="hbody"><h2>داشبورد چک‌ها</h2>'
+       . '<div class="hsub">مرور کلی اسناد دریافتی، صادره و تضمینی</div></div>'
+       . '<a class="hbtn" href="cheques.php?p=create">＋ ثبت چک جدید</a></div>';
+
     echo '<div class="cards">';
-    echo '<div class="card"><h4>چک دریافتی در جریان</h4><div class="big">' . money($rec['s']) . '</div><div class="sub">' . fa($rec['c']) . ' فقره</div></div>';
-    echo '<div class="card"><h4>سررسید ۷ روز آینده (دریافتی)</h4><div class="big" style="color:#ea580c">' . money($due7['s']) . '</div><div class="sub">' . fa($due7['c']) . ' فقره — برای سپرده‌گذاری</div></div>';
-    echo '<div class="card"><h4>چک صادره ۷ روز آینده</h4><div class="big" style="color:#dc2626">' . money($iss7['s']) . '</div><div class="sub">' . fa($iss7['c']) . ' فقره — موجودی حساب را کنترل کنید</div></div>';
-    echo '<div class="card"><h4>برگشتی‌ها</h4><div class="big" style="color:#dc2626">' . money($bounced['s']) . '</div><div class="sub">' . fa($bounced['c']) . ' فقره — نیاز به پیگیری</div></div>';
-    echo '<div class="card"><h4>چک تضمینی در وثیقه</h4><div class="big">' . fa($guar['c']) . ' فقره</div><div class="sub">جمع ' . money($guar['s']) . '</div></div>';
-    echo '<div class="card"><h4>در انتظار تأیید</h4><div class="big" style="color:#ca8a04">' . fa($pending['c']) . '</div><div class="sub"><a href="cheques.php?p=approvals">مشاهده صف تأیید</a></div></div>';
+    echo '<div class="stat g"><div class="lab">چک دریافتی در جریان</div><div class="val">' . money($rec['s']) . '</div><div class="vsub">' . fa($rec['c']) . ' فقره</div></div>';
+    echo '<div class="stat o"><div class="lab">سررسید ۷ روز آینده (دریافتی)</div><div class="val">' . money($due7['s']) . '</div><div class="vsub">' . fa($due7['c']) . ' فقره — برای سپرده‌گذاری</div></div>';
+    echo '<div class="stat r"><div class="lab">چک صادره ۷ روز آینده</div><div class="val">' . money($iss7['s']) . '</div><div class="vsub">' . fa($iss7['c']) . ' فقره — موجودی را کنترل کنید</div></div>';
+    echo '<div class="stat r"><div class="lab">برگشتی‌ها</div><div class="val">' . money($bounced['s']) . '</div><div class="vsub">' . fa($bounced['c']) . ' فقره — نیاز به پیگیری</div></div>';
+    echo '<div class="stat c"><div class="lab">چک تضمینی در وثیقه</div><div class="val">' . fa($guar['c']) . ' <span style="font-size:14px;color:#6b7280">فقره</span></div><div class="vsub">جمع ' . money($guar['s']) . '</div></div>';
+    echo '<div class="stat p"><div class="lab">در انتظار تأیید</div><div class="val">' . fa($pending['c']) . '</div><div class="vsub"><a href="cheques.php?p=approvals">مشاهده صف تأیید</a></div></div>';
     echo '</div>';
 
     if ((int)$overIssued['c'] > 0) {
@@ -967,33 +1005,53 @@ function page_dashboard() {
 /* ---------- فهرست ---------- */
 function page_list() {
     render_header('فهرست چک‌ها');
+    $dir = g('dir'); $kindF = g('kind'); $statusF = g('status'); $q = g('q');
     $where = "c.deleted_at IS NULL"; $p = array();
-    if (!empty($_GET['dir']))   { $where .= " AND c.direction=" . db()->quote($_GET['dir']); }
-    if (!empty($_GET['kind']))  { $where .= " AND c.kind=" . db()->quote($_GET['kind']); }
-    if (!empty($_GET['status'])){ $where .= " AND c.status=" . db()->quote($_GET['status']); }
-    if (!empty($_GET['q']))     { $where .= " AND (c.cheque_number LIKE ? OR c.sayyad_id LIKE ? OR c.party_name LIKE ?)"; $like='%'.$_GET['q'].'%'; $p=array($like,$like,$like); }
+    if ($dir !== '')    { $where .= " AND c.direction=" . db()->quote($dir); }
+    if ($kindF !== '')  { $where .= " AND c.kind=" . db()->quote($kindF); }
+    if ($statusF !== ''){ $where .= " AND c.status=" . db()->quote($statusF); }
+    if ($q !== '')      { $where .= " AND (c.cheque_number LIKE ? OR c.sayyad_id LIKE ? OR c.party_name LIKE ?)"; $like='%'.$q.'%'; $p=array($like,$like,$like); }
     $rows = q_all("SELECT c.* FROM checks c WHERE $where ORDER BY c.id DESC LIMIT 300", $p);
-    echo '<div class="seg">
-        <a href="cheques.php?p=list" class="' . (empty($_GET['dir']) ? 'active' : '') . '">همه</a>
-        <a href="cheques.php?p=list&dir=received&kind=payment" class="' . (($_GET['dir']??'')==='received' ? 'active' : '') . '">دریافتی پرداختی</a>
-        <a href="cheques.php?p=list&dir=issued&kind=payment" class="' . (($_GET['dir']??'')==='issued' ? 'active' : '') . '">صادره پرداختی</a>
-        <a href="cheques.php?p=list&kind=guarantee" class="' . (($_GET['kind']??'')==='guarantee' ? 'active' : '') . '">تضمینی</a>
-        <a href="cheques.php?p=list&status=bounced" class="' . (($_GET['status']??'')==='bounced' ? 'active' : '') . '">برگشتی‌ها</a>
+
+    $cnt = function($cond) {
+        try { $r = q_one("SELECT COUNT(*) c, COALESCE(SUM(amount),0) s FROM checks WHERE deleted_at IS NULL AND $cond"); return $r; }
+        catch (Exception $e) { return array('c'=>0,'s'=>0); }
+    };
+    $all   = $cnt("1=1");
+    $rec   = $cnt("kind='payment' AND direction='received'");
+    $iss   = $cnt("kind='payment' AND direction='issued'");
+    $guar  = $cnt("kind='guarantee'");
+    $bounc = $cnt("status='bounced'");
+
+    echo '<div class="hero green"><span class="hico">🏦</span><div class="hbody"><h2>مدیریت چک‌ها</h2>'
+       . '<div class="hsub">همه چک‌های دریافتی، صادره و تضمینی در یک نگاه</div></div>'
+       . '<a class="hbtn" href="cheques.php?p=create">＋ چک جدید</a></div>';
+
+    echo '<div class="pills">
+        <a class="pill' . ($dir==='' ? ' active' : '') . '" href="cheques.php?p=list">همه <span class="n">' . fa($all['c']) . '</span></a>
+        <a class="pill' . ($dir==='received' ? ' active' : '') . '" href="cheques.php?p=list&dir=received&kind=payment">💵 دریافتی <span class="n">' . fa($rec['c']) . '</span></a>
+        <a class="pill' . ($dir==='issued' ? ' active' : '') . '" href="cheques.php?p=list&dir=issued&kind=payment">💸 صادره <span class="n">' . fa($iss['c']) . '</span></a>
+        <a class="pill' . ($kindF==='guarantee' ? ' active' : '') . '" href="cheques.php?p=list&kind=guarantee">🤝 تضمینی <span class="n">' . fa($guar['c']) . '</span></a>
+        <a class="pill' . ($statusF==='bounced' ? ' active' : '') . '" href="cheques.php?p=list&status=bounced" style="border-color:#fecaca;color:#b91c1c">❌ برگشتی <span class="n">' . fa($bounc['c']) . '</span></a>
       </div>';
-    echo '<form method="get" style="margin-bottom:12px;display:flex;gap:8px"><input type="hidden" name="p" value="list">
-          <input name="q" placeholder="جستجو: شماره چک، صیاد، نام طرف..." value="' . e($_GET['q'] ?? '') . '">
-          <button class="btn btn-primary">جستجو</button></form>';
-    echo '<table><tr><th>#</th><th>نوع</th><th>شماره/صیاد</th><th>بانک</th><th>طرف حساب</th><th>مبلغ</th><th>سررسید</th><th>وضعیت</th><th></th></tr>';
+
+    echo '<form method="get" style="margin-bottom:14px;display:flex;gap:8px"><input type="hidden" name="p" value="list">
+          ' . ($dir!==''?'<input type="hidden" name="dir" value="'.e($dir).'">':'') . ($kindF!==''?'<input type="hidden" name="kind" value="'.e($kindF).'">':'') . ($statusF!==''?'<input type="hidden" name="status" value="'.e($statusF).'">':'') . '
+          <input name="q" placeholder="🔍 جستجو با شماره چک، صیاد یا نام طرف..." value="' . e($q) . '">
+          <button class="btn btn-primary">فیلتر</button></form>';
+
+    echo '<div class="tablecard"><table><tr><th>#</th><th>نوع</th><th>شماره/صیاد</th><th>بانک</th><th>طرف حساب</th><th>مبلغ</th><th>سررسید</th><th>وضعیت</th><th></th></tr>';
+    if (!$rows) echo '<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">چکی یافت نشد.</td></tr>';
     foreach ($rows as $c) {
         $d = $c['kind'] === 'guarantee' ? $c['guarantee_return_date'] : $c['due_date'];
         echo '<tr><td>' . fa($c['id']) . '</td><td>' . kind_label($c['kind'], $c['direction']) . '</td>'
-           . '<td>' . e($c['cheque_number'] ?: '—') . '<div class="muted">صیاد: ' . e($c['sayyad_id'] ?: '—') . '</div></td>'
+           . '<td><a href="cheques.php?p=detail&id=' . $c['id'] . '">' . e($c['cheque_number'] ?: '#' . $c['id']) . '</a><div class="muted">صیاد: ' . e($c['sayyad_id'] ?: '—') . '</div></td>'
            . '<td>' . e($c['bank_name'] ?: '—') . '</td><td>' . e($c['party_name'] ?: '—') . '</td>'
-           . '<td>' . money($c['amount']) . '</td><td>' . jdate($d) . '</td>'
+           . '<td><b>' . money($c['amount']) . '</b></td><td>' . jdate_long($d) . ' ' . due_badge($d) . '</td>'
            . '<td>' . status_tag($c['status']) . ($c['locked_at'] ? ' 🔒' : '') . '</td>'
            . '<td><a class="btn btn-gray btn-sm" href="cheques.php?p=detail&id=' . $c['id'] . '">مشاهده</a></td></tr>';
     }
-    echo '</table><div class="muted" style="margin-top:8px">' . fa(count($rows)) . ' ردیف (حداکثر ۳۰۰)</div>';
+    echo '</table></div><div class="muted" style="margin-top:8px">' . fa(count($rows)) . ' ردیف</div>';
     render_footer();
 }
 
@@ -1001,8 +1059,8 @@ function page_list() {
 function page_create() {
     global $me;
     render_header('ثبت چک جدید');
-    $direction = in_array($_GET['direction'] ?? 'received', array('received','issued'), true) ? $_GET['direction'] : 'received';
-    $kind      = in_array($_GET['kind'] ?? 'payment', array('payment','guarantee'), true) ? $_GET['kind'] : 'payment';
+    $direction = in_array(g('direction','received'), array('received','issued'), true) ? g('direction') : 'received';
+    $kind      = in_array(g('kind','payment'), array('payment','guarantee'), true) ? g('kind') : 'payment';
     $banks = bank_accounts();
     $customers = parties('customer');
     $suppliers = parties('supplier');

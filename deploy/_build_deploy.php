@@ -215,33 +215,68 @@ $written = @file_put_contents($target, $moduleCode);
 if ($written !== false) { ok("cheques.php نوشته شد ($written bytes)"); }
 else { err('نوشتن cheques.php انجام نشد — مجوز پوشه erp را بررسی کنید (باید 755/775 باشد)'); }
 
-/* ---------- افزودن لینک به منوی کناری ERP ---------- */
-step(6, 'افزودن لینک «مدیریت چک‌ها» به منوی کناری');
+/* ---------- افزودن لینک به منوی کناری ERP (با ترمیم درج خراب قبلی) ---------- */
+step(6, 'منوی کناری ERP — لینک «مدیریت چک‌ها»');
 $main = $erpRoot . '/app/views/layouts/main.php';
+$MARK = 'cheques-link-auto';
 if (!is_file($main)) { warn('فایل layouts/main.php پیدا نشد — لینک را دستی اضافه کنید'); }
 else {
     $html = file_get_contents($main);
-    if (strpos($html, 'cheques.php') !== false) {
-        ok('لینک چک‌ها از قبل در منو وجود دارد');
+    @copy($main, $main . '.bak-cheques-' . date('Ymd-His'));
+
+    /* 1) حذف هر نوع درج قبلیِ ما (هم نشان‌دار، هم بدون نشان که به‌هم چسبیده) */
+    $html = preg_replace('/\n?[ \t]*<[^>]*' . preg_quote($MARK, '/') . '[^>]*>.*?<\/[^>]+>\s*/s', "\n", $html);
+    /* حذف تکه‌ی چسبیده‌ای که دفعه قبل با تغییر متن Payment ساخته شد */
+    $html = preg_replace('/<a[^>]*href="\/cheques\.php"[^>]*>\s*🏦[^<]*<\/a>\s*/s', '', $html);
+    /* اگر متن «مدیریت چک‌ها» جایی وسط یک لینک دیگر نشسته باشد، آن بخش را پاک نمی‌کنیم تا منو نشکند */
+
+    /* 2) پیدا کردن بلوک یک آیتم منو حول «Payment Receipts» */
+    $lines = preg_split('/\r\n|\r|\n/', $html);
+    $anchorIdx = -1;
+    foreach ($lines as $i => $l) { if (stripos($l, 'Payment Receipts') !== false) { $anchorIdx = $i; break; } }
+
+    $insertLine = null;
+    if ($anchorIdx >= 0) {
+        /* ابتدای آیتم: به عقب برو تا خط <li> یا <a> باز شونده */
+        $start = $anchorIdx;
+        for ($k = $anchorIdx; $k >= max(0, $anchorIdx - 12); $k--) {
+            if (preg_match('/<(li|a)\b/', $lines[$k])) { $start = $k; break; }
+        }
+        /* انتهای آیتم: جلو برو تا </li> یا </a> */
+        $end = $anchorIdx;
+        for ($k = $anchorIdx; $k <= min(count($lines) - 1, $anchorIdx + 12); $k++) {
+            if (preg_match('/<\/(li|a)>/', $lines[$k])) { $end = $k; break; }
+        }
+        $block = implode("\n", array_slice($lines, $start, $end - $start + 1));
+
+        /* کلاس و ساختار آیکون را از همان آیتم الگو بگیر */
+        preg_match('/class="([^"]*(nav-link|sidebar-link|menu-link)[^"]*)"/i', $block, $cm);
+        $cls = $cm[1] ?? 'nav-link';
+        /* نسخه کلون‌شده از بلوک، با href و متن جدید و حذف badge */
+        $clone = $block;
+        $clone = preg_replace('/href=["\'][^"\']*["\']/', 'href="/cheques.php"', $clone, 1);
+        $clone = preg_replace('/\b(nav-link|sidebar-link|menu-link)(\s+active)?/i', '$1', $clone);
+        $clone = preg_replace('/<span[^>]*(badge|count|notif|rounded)[^>]*>.*?<\/span>/is', '', $clone);
+        $clone = preg_replace('/<sup[^>]*>.*?<\/sup>/is', '', $clone);
+        /* متن لینک را جایگزین کن: محتوای متنی Payment Receipts را با فارسی عوض کن */
+        $clone = preg_replace('/(>\s*)[^<>]*Payment Receipts[^<>]*(<)/s', '$1🏦 مدیریت چک‌ها$2', $clone);
+        /* نشانگر برای نگهداری/حذف بعدی */
+        $clone = str_replace('<li', '<li data-' . $MARK . '="1"', $clone);
+        if (strpos($clone, '<li') === false) {
+            $clone = '<!--' . $MARK . '--><a href="/cheques.php" class="' . $cls . '">🏦 مدیریت چک‌ها</a>';
+        }
+        $insertLine = $clone;
+        array_splice($lines, $end + 1, 0, array($insertLine));
+        file_put_contents($main, implode("\n", $lines));
+        ok('لینک «مدیریت چک‌ها» به‌صورت آیتم مستقل بعد از Payment Receipts درج شد (بکاپ گرفته شد)');
     } else {
-        $anchors = array('Payment Receipts', 'Export Bundles', 'Packing Lists', 'Official Letters');
-        $lines = file($main);
-        $idx = -1; $keyword = '';
-        foreach ($lines as $i => $l) {
-            foreach ($anchors as $a) { if (stripos($l, $a) !== false) { $idx = $i; $keyword = $a; break 2; } }
-        }
-        if ($idx < 0) { warn('نقطه درج منو پیدا نشد — این خط را دستی در سایدبار اضافه کنید:'); echo "    <a href=\"/cheques.php\">🏦 مدیریت چک‌ها</a>\n"; }
-        else {
-            @copy($main, $main . '.bak-cheques-' . date('Ymd-His'));
-            $new = $lines[$idx];
-            $new = preg_replace('/href=["\'][^"\']*["\']/', 'href="/cheques.php"', $new, 1);
-            $new = str_ireplace($keyword, '🏦 مدیریت چک‌ها', $new);
-            /* حذف badge شمارش (در صورت وجود) */
-            $new = preg_replace('/<span[^>]*(badge|count|notification)[^>]*>.*?<\/span>/s', '', $new);
-            array_splice($lines, $idx + 1, 0, array($new));
-            file_put_contents($main, implode('', $lines));
-            ok('لینک بعد از «' . $keyword . '» در منو درج شد (بکاپ گرفته شد)');
-        }
+        /* fallback: درج ساده قبل از </body> یا بعد از اولین </nav> */
+        $simple = "\n<!--" . $MARK . "--><a href=\"/cheques.php\" style=\"display:block;padding:8px;color:#fff\">🏦 مدیریت چک‌ها</a>\n";
+        if (strpos($html, '</nav>') !== false) {
+            $html = preg_replace('/<\/nav>/', $simple . '</nav>', $html, 1);
+        } else { $html .= $simple; }
+        file_put_contents($main, $html);
+        warn('بلوک منوی الگو پیدا نشد؛ یک لینک ساده درج شد. برای چیدمان دقیق‌تر خروجی recon_menu را بفرستید.');
     }
 }
 
