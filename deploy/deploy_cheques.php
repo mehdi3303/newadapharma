@@ -371,7 +371,11 @@ function g($key, $default = '') {
 function money($n) { return fa(number_format((float)$n / 10)) . ' تومان'; }
 
 function read_toman($key) {
-    $v = str_replace(array(',', '،', ' '), '', (string)($_POST[$key] ?? ''));
+    $v = strtr((string)($_POST[$key] ?? ''), array(
+        '۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9',
+        '٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'
+    ));
+    $v = str_replace(array(',', '،', '٬', ' ', "\t", "\n"), '', $v);
     return is_numeric($v) && (float)$v > 0 ? (float)$v * 10 : null; /* → ریال */
 }
 function post_gregorian($name) {
@@ -380,7 +384,7 @@ function post_gregorian($name) {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) $g = trim((string)($_POST[$name . '_native'] ?? ''));
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) return $g;
     $j = trim((string)($_POST[$name] ?? ''));
-    $j = strtr($j, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','/'=>'-',' '=>''));
+    $j = strtr($j, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9','/'=>'-','／'=>'-',' '=>''));
     if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $j, $m)) {
         list($gy, $gm, $gd) = jalali_to_gregorian((int)$m[1], (int)$m[2], (int)$m[3]);
         return sprintf('%04d-%02d-%02d', $gy, $gm, $gd);
