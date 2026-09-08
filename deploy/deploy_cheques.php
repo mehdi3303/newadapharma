@@ -452,10 +452,13 @@ function jinput_html($name, $valueGreg, $label, $required = false) {
     $jval = gregorian_to_jalali_str($valueGreg);
     $parts = preg_split('#[-/]#', (string)$jval);
     $jy = (int)($parts[0] ?? 0); $jm = (int)($parts[1] ?? 0); $jd = (int)($parts[2] ?? 0);
+    /* برای تاریخ خالی نیز مبنای سال باید شمسی باشد، نه date('Y') میلادی. */
+    $nowJ = gregorian_to_jalali((int)date('Y'), (int)date('n'), (int)date('j'));
+    $baseJY = $jy ?: (int)$nowJ[0];
     $out = '<div class="jfield"><label>' . e($label) . ($required ? ' *' : '') . '</label>'
        . '<div class="jalali-selects" dir="rtl">'
-       . '<select name="' . e($name) . '_jy" class="jpart jyear" aria-label="سال شمسی"' . ($required ? ' required' : '') . '><option value="">سال</option>';
-    for ($y = max(1300, ($jy ?: (int)date('Y') - 10)); $y <= max(1450, ($jy ?: (int)date('Y') + 10)); $y++) $out .= '<option value="'.$y.'"'.($y===$jy?' selected':'').'>' . fa($y) . '</option>';
+       . '<select name="' . e($name) . '_jy" class="jpart jyear" aria-label="سال شمسی"' . ($required ? ' required' : '') . '><option value="">سال شمسی</option>';
+    for ($y = max(1300, $baseJY - 10); $y <= min(1450, $baseJY + 10); $y++) $out .= '<option value="'.$y.'"'.($y===$jy?' selected':'').'>' . fa($y) . '</option>';
     $out .= '</select><select name="' . e($name) . '_jm" class="jpart jmonth" aria-label="ماه شمسی"' . ($required ? ' required' : '') . '><option value="">ماه</option>';
     for ($mo=1;$mo<=12;$mo++) $out .= '<option value="'.$mo.'"'.($mo===$jm?' selected':'').'>' . e($JA_MONTHS[$mo]) . '</option>';
     $out .= '</select><select name="' . e($name) . '_jd" class="jpart jday" aria-label="روز شمسی"' . ($required ? ' required' : '') . '><option value="">روز</option>';
