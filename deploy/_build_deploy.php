@@ -259,6 +259,15 @@ $written = @file_put_contents($target, $moduleCode);
 if ($written !== false) { ok("cheques.php نوشته شد ($written bytes)"); }
 else { err('نوشتن cheques.php انجام نشد — مجوز پوشه erp را بررسی کنید (باید 755/775 باشد)'); }
 
+/* فایل JS مستقل: برای سرورهایی که اجرای inline script را با CSP مسدود می‌کنند */
+$jsTarget = $erpRoot . '/cheques.js';
+$jsCode = <<<'MODULEJS'
+__MODULE_JS_PLACEHOLDER__
+MODULEJS;
+$jsWritten = @file_put_contents($jsTarget, $jsCode);
+if ($jsWritten !== false) { ok("cheques.js نوشته شد ($jsWritten bytes)"); }
+else { warn('نوشتن cheques.js انجام نشد — تقویم و کنترل‌های زنده ممکن است فعال نشوند'); }
+
 /* ---------- افزودن لینک به منوی کناری ERP (با ترمیم درج خراب قبلی) ---------- */
 step(6, 'منوی کناری ERP — لینک «مدیریت چک‌ها»');
 $main = $erpRoot . '/app/views/layouts/main.php';
