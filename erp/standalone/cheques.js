@@ -61,6 +61,7 @@ function initJDate(input){
   function setFromJal(jy,jm,jd){
     var g=jalToGreg(jy,jm,jd);
     input.value=toFaDigits(jy+'/'+pad(jm)+'/'+pad(jd));
+    if(jalaliParts && jalaliParts.length>=3){ jalaliParts[0].value=jy; jalaliParts[1].value=jm; jalaliParts[2].value=jd; }
     if(hidden) hidden.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
     if(nativeInput) nativeInput.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
     showHint();
@@ -83,6 +84,14 @@ function initJDate(input){
       input.value=toFaDigits(jj[0]+'/'+pad(jj[1])+'/'+pad(jj[2])); showHint(); input.dispatchEvent(new Event('change'));
     }
   }); }
+  var jalaliParts=p ? p.querySelectorAll('.jpart') : [];
+  function syncFromParts(){
+    if(!jalaliParts || jalaliParts.length<3) return;
+    var y=parseInt(jalaliParts[0].value||0,10), m=parseInt(jalaliParts[1].value||0,10), d=parseInt(jalaliParts[2].value||0,10);
+    if(y && m && d) setFromJal(y,m,d);
+    else { input.value=''; if(hidden) hidden.value=''; showHint(); }
+  }
+  Array.prototype.forEach.call(jalaliParts,function(sel){ sel.addEventListener('change',syncFromParts); });
   showHint();
   var box=null;
   function closeBox(){ if(box){ box.remove(); box=null; } }

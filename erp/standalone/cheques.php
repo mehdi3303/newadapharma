@@ -130,7 +130,13 @@ function read_toman($key) {
     return is_numeric($v) && (float)$v > 0 ? (float)$v * 10 : null; /* → ریال */
 }
 function post_gregorian($name) {
-    /* مقدار میلادی ساخته‌شده توسط تقویم شمسی (hidden)؛ در نبودش، تبدیل سمت سرور */
+    /* اول انتخاب‌گرهای شمسیِ بدون وابستگی به JavaScript */
+    $jy = (int)($_POST[$name . '_jy'] ?? 0); $jm = (int)($_POST[$name . '_jm'] ?? 0); $jd = (int)($_POST[$name . '_jd'] ?? 0);
+    if ($jy >= 1200 && $jm >= 1 && $jm <= 12 && $jd >= 1 && $jd <= 31) {
+        list($gy,$gm,$gd) = jalali_to_gregorian($jy,$jm,$jd);
+        return sprintf('%04d-%02d-%02d',$gy,$gm,$gd);
+    }
+    /* مقدار میلادی ساخته‌شده توسط تقویم (hidden)؛ در نبودش، تبدیل سمت سرور */
     $g = trim((string)($_POST[$name . '_g'] ?? ''));
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) $g = trim((string)($_POST[$name . '_native'] ?? ''));
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) return $g;
@@ -193,15 +199,25 @@ function gregorian_to_jalali_str($g) {
 }
 /* فیلد تاریخ شمسی با تقویم (مقدار ورودی میلادی است) */
 function jinput_html($name, $valueGreg, $label, $required = false) {
+    global $JA_MONTHS;
     $jval = gregorian_to_jalali_str($valueGreg);
-    return '<div class="jfield"><label>' . e($label) . ($required ? ' *' : '') . '</label>'
+    $parts = preg_split('#[-/]#', (string)$jval);
+    $jy = (int)($parts[0] ?? 0); $jm = (int)($parts[1] ?? 0); $jd = (int)($parts[2] ?? 0);
+    $out = '<div class="jfield"><label>' . e($label) . ($required ? ' *' : '') . '</label>'
+       . '<div class="jalali-selects" dir="rtl">'
+       . '<select name="' . e($name) . '_jy" class="jpart jyear" aria-label="سال شمسی"' . ($required ? ' required' : '') . '><option value="">سال</option>';
+    for ($y = max(1300, ($jy ?: (int)date('Y') - 10)); $y <= max(1450, ($jy ?: (int)date('Y') + 10)); $y++) $out .= '<option value="'.$y.'"'.($y===$jy?' selected':'').'>' . fa($y) . '</option>';
+    $out .= '</select><select name="' . e($name) . '_jm" class="jpart jmonth" aria-label="ماه شمسی"' . ($required ? ' required' : '') . '><option value="">ماه</option>';
+    for ($mo=1;$mo<=12;$mo++) $out .= '<option value="'.$mo.'"'.($mo===$jm?' selected':'').'>' . e($JA_MONTHS[$mo]) . '</option>';
+    $out .= '</select><select name="' . e($name) . '_jd" class="jpart jday" aria-label="روز شمسی"' . ($required ? ' required' : '') . '><option value="">روز</option>';
+    for ($d=1;$d<=31;$d++) $out .= '<option value="'.$d.'"'.($d===$jd?' selected':'').'>' . fa($d) . '</option>';
+    $out .= '</select></div>'
        . '<span class="jico">📅</span>'
-       . '<input type="text" class="jdate" name="' . e($name) . '" id="jd_' . e($name) . '" value="' . e($jval) . '"'
-       . ' placeholder="روی 📅 بزنید یا تایپ کنید: 1405/06/17" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
+       . '<input type="text" class="jdate" name="' . e($name) . '" id="jd_' . e($name) . '" value="' . e($jval) . '" readonly placeholder="تاریخ شمسی با انتخاب سال، ماه و روز" autocomplete="off">'
        . '<div class="greg-hint" id="greg_' . e($name) . '"></div>'
        . '<input type="hidden" name="' . e($name) . '_g" id="jdg_' . e($name) . '" value="' . e($valueGreg ?: '') . '">'
-       . '<div class="native-date-fallback"><span>اگر تقویم باز نشد، انتخاب میلادی:</span><input type="date" class="greg-native" name="' . e($name) . '_native" value="' . e($valueGreg ?: '') . '"></div>'
        . '</div>';
+    return $out;
 }
 function jinput($name, $valueGreg, $label, $required = false) { echo jinput_html($name, $valueGreg, $label, $required); }
 function jinput_ret($name, $valueGreg, $label, $required = false) { return jinput_html($name, $valueGreg, $label, $required); }
@@ -969,7 +985,7 @@ function render_header($title) {
     .seg a.active{background:var(--navy);color:#fff}
     .amount-words{font-size:12px;color:#15803d;margin-top:4px;min-height:16px;font-weight:700}
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
-    .jfield{position:relative}
+    .jfield{position:relative}.jalali-selects{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:5px;margin-bottom:5px}.jalali-selects select{padding:7px 5px;font-size:11px}.jdate{background:#f8fafc!important;color:#475569}
     .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
     .native-date-fallback{display:flex;align-items:center;gap:6px;margin-top:3px;color:#64748b;font-size:10px}.greg-native{width:auto;padding:2px 5px;font-size:11px;border-radius:6px}.greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
     .greg-hint.empty{color:#cbd5e1;font-weight:600}
