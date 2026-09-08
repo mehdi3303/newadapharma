@@ -69,6 +69,7 @@ $ddl[] = "CREATE TABLE IF NOT EXISTS `checks` (
   `direction` ENUM('received','issued') NOT NULL,
   `cheque_number` VARCHAR(50) NULL,
   `sayyad_id` VARCHAR(20) NULL,
+  `national_id` VARCHAR(20) NULL,
   `series` VARCHAR(30) NULL,
   `serial` VARCHAR(30) NULL,
   `bank_name` VARCHAR(100) NULL,
@@ -207,6 +208,7 @@ $addCols = array(
         "sayyad_status VARCHAR(30) NULL",
         "sayyad_registered_at DATETIME NULL",
         "sayyad_confirmed_at DATETIME NULL",
+        "national_id VARCHAR(20) NULL",
     ),
 );
 foreach ($addCols as $tbl => $defs) {

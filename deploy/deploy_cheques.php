@@ -69,6 +69,7 @@ $ddl[] = "CREATE TABLE IF NOT EXISTS `checks` (
   `direction` ENUM('received','issued') NOT NULL,
   `cheque_number` VARCHAR(50) NULL,
   `sayyad_id` VARCHAR(20) NULL,
+  `national_id` VARCHAR(20) NULL,
   `series` VARCHAR(30) NULL,
   `serial` VARCHAR(30) NULL,
   `bank_name` VARCHAR(100) NULL,
@@ -207,6 +208,7 @@ $addCols = array(
         "sayyad_status VARCHAR(30) NULL",
         "sayyad_registered_at DATETIME NULL",
         "sayyad_confirmed_at DATETIME NULL",
+        "national_id VARCHAR(20) NULL",
     ),
 );
 foreach ($addCols as $tbl => $defs) {
@@ -673,14 +675,16 @@ function party_risk($type, $id, $name = null) {
         $score += min((int)($inq['bounced_count'] ?? 0), 6) * 5;
     }
     $score = (int)round(max(0, min(100, $score)));
-    $level = $score >= 55 ? 'high' : ($score >= 25 ? 'medium' : 'low');
     $data = $total + ((int)($inq['bounced_count'] ?? 0));
+    /* صفر سابقه به‌معنای سابقه رضایت‌بخش نیست؛ وضعیت باید ناشناخته باشد. */
+    $level = ($data === 0) ? 'unknown' : ($score >= 55 ? 'high' : ($score >= 25 ? 'medium' : 'low'));
     return array('score'=>$score, 'level'=>$level, 'total'=>$total, 'bounced'=>$bounced,
                  'overdue'=>$overdue, 'avg_delay'=>$delay, 'inquiry'=>$inq, 'data_points'=>$data);
 }
 function risk_badge($level, $score) {
     if ($level === 'high') return '<span class="tag tag-red">ریسک بالا · ' . fa($score) . '/100</span>';
     if ($level === 'medium') return '<span class="tag tag-yellow">ریسک متوسط · ' . fa($score) . '/100</span>';
+    if ($level === 'unknown') return '<span class="tag" style="background:#f1f5f9;color:#475569">اطلاعات کافی برای امتیازدهی وجود ندارد</span>';
     return '<span class="tag tag-green">ریسک کم · ' . fa($score) . '/100</span>';
 }
 
@@ -820,11 +824,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $sayyad    = trim((string)($_POST['sayyad_id'] ?? ''));
         $sayyad    = strtr(str_replace(array(' ', '-', '_'), '', $sayyad), array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9'));
         $chequeNo  = trim((string)($_POST['cheque_number'] ?? ''));
+        $nationalId = strtr(trim((string)($_POST['national_id'] ?? '')), array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9'));
+        $nationalId = preg_replace('/\D+/', '', $nationalId);
         $dueDate   = post_gregorian('due_date');
         $issueDate = post_gregorian('issue_date') ?: date('Y-m-d');
         $gReturn   = post_gregorian('guarantee_return_date');
 
         if ($amount === null) { flash('مبلغ را به تومان وارد کنید (بزرگ‌تر از صفر).'); }
+        elseif ($nationalId !== '' && (!preg_match('/^[0-9]{10,14}$/', $nationalId))) { flash('کد ملی/شناسه ملی باید ۱۰ تا ۱۴ رقم باشد.'); }
         elseif ($sayyad !== '' && (!preg_match('/^[0-9]{16}$/', $sayyad))) { flash('شناسه صیاد باید فقط عدد (۱۶ رقم) باشد.'); }
         else {
             if ($sayyad !== '') {
@@ -841,13 +848,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $imgB = upload_cheque_file('image_back', 'back');
 
                 db()->prepare("INSERT INTO checks
-                    (kind, direction, cheque_number, sayyad_id, series, serial, bank_name, branch_name, branch_code,
+                    (kind, direction, cheque_number, sayyad_id, national_id, series, serial, bank_name, branch_name, branch_code,
                      bank_account_id, party_type, customer_id, supplier_id, party_name, amount, issue_date, due_date,
                      guarantee_reason, guarantee_return_date, status, ref_type, ref_id, image_front, image_back,
                      description, checkbook_id, created_by, created_at)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())")
                     ->execute(array(
-                        $kind, $direction, $chequeNo ?: null, $sayyad ?: null,
+                        $kind, $direction, $chequeNo ?: null, $sayyad ?: null, $nationalId ?: null,
                         trim((string)($_POST['series'] ?? '')) ?: null, trim((string)($_POST['serial'] ?? '')) ?: null,
                         trim((string)($_POST['bank_name'] ?? '')) ?: null, trim((string)($_POST['branch_name'] ?? '')) ?: null,
                         trim((string)($_POST['branch_code'] ?? '')) ?: null,
@@ -1518,9 +1525,10 @@ function refreshRisk(){
   box.style.display='block'; box.innerHTML='<div class="muted">در حال محاسبه ریسک...</div>';
   fetch(url).then(r=>r.json()).then(d=>{
     if(!d.ok){ box.style.display='none'; return; }
-    var col = d.level==='high' ? '#dc2626' : (d.level==='medium' ? '#ca8a04' : '#16a34a');
+    var col = d.level==='high' ? '#dc2626' : (d.level==='medium' ? '#ca8a04' : (d.level==='unknown' ? '#64748b' : '#16a34a'));
+    var scoreText = d.level==='unknown' ? 'بدون سابقه ثبت‌شده' : (toFaDigits(d.score)+'/100');
     box.innerHTML='<div class="card" style="border-right:4px solid '+col+'">'
-      + '<b>🧮 امتیاز اعتبار طرف: '+toFaDigits(d.score)+'/100</b> '
+      + '<b>🧮 امتیاز اعتبار طرف: '+scoreText+'</b> '
       + (d.banned? ' <span class="tag tag-red">محروم از دسته‌چک!</span>' : '')
       + '<div class="muted" style="margin-top:4px">چک‌های ثبت‌شده: '+toFaDigits(d.total||0)+' · برگشتی: '+toFaDigits(d.bounced||0)+' · باز سررسید: '+toFaDigits(d.overdue||0)+'</div>'
       + '<div style="margin-top:6px;color:'+col+';font-weight:700">'+d.advice+'</div></div>';
@@ -1595,6 +1603,8 @@ function updateChequePreview(){
   var raw=amt?toEnDigits(amt.value).replace(/[^0-9]/g,''):'';
   cpText('cp_amount', raw?toFaDigits(raw.replace(/\B(?=(\d{3})+(?!\d))/g,',')):'', '0');
   cpText('cp_words', raw?(faNumWords(parseInt(raw,10))+' تومان'):'', 'مبلغ چک به حروف اینجا نوشته می‌شود…');
+  var ni=document.getElementById('national_id');
+  cpText('cp_national', ni&&ni.value.trim()?toFaDigits(toEnDigits(ni.value.trim()).replace(/[^0-9]/g,'')):'', '—');
   /* شماره چک */
   var cn=document.getElementById('cheque_number');
   cpText('cp_cheque', cn&&cn.value.trim()?toFaDigits(cn.value.trim()):'', '_ _ _ _ _ _');
@@ -1624,7 +1634,7 @@ function updateChequePreview(){
 }
 function initChequePreview(){
   if(!cpEl('cheque_preview')) return;
-  var ids=['amount_toman','cheque_number','party_name','party_type','customer_id','supplier_id'];
+  var ids=['amount_toman','national_id','cheque_number','party_name','party_type','customer_id','supplier_id'];
   ids.forEach(function(id){ var el=document.getElementById(id); if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
   ['sayyad_id','bank_name'].forEach(function(nm){ var el=document.getElementsByName(nm)[0]; if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
   /* تاریخ‌ها: بعد از تغییر مقدار مخفی میلادی توسط تقویم */
@@ -1839,10 +1849,10 @@ function page_create() {
     $cbs = checkbooks_active();
 
     echo '<div class="seg">
-        <a href="cheques.php?p=create&direction=received&kind=payment" class="active">💵 چک دریافتی</a>
-        <a href="cheques.php?p=create&direction=issued&kind=payment">💸 چک صادره</a>
-        <a href="cheques.php?p=create&direction=received&kind=guarantee">🤝 تضمینی دریافتی</a>
-        <a href="cheques.php?p=create&direction=issued&kind=guarantee">🤝 تضمینی صادره</a>
+        <a href="cheques.php?p=create&direction=received&kind=payment" class="' . ($direction==='received' && $kind==='payment' ? 'active' : '') . '">💵 چک دریافتی</a>
+        <a href="cheques.php?p=create&direction=issued&kind=payment" class="' . ($direction==='issued' && $kind==='payment' ? 'active' : '') . '">💸 چک صادره</a>
+        <a href="cheques.php?p=create&direction=received&kind=guarantee" class="' . ($direction==='received' && $kind==='guarantee' ? 'active' : '') . '">🤝 تضمینی دریافتی</a>
+        <a href="cheques.php?p=create&direction=issued&kind=guarantee" class="' . ($direction==='issued' && $kind==='guarantee' ? 'active' : '') . '">🤝 تضمینی صادره</a>
       </div>';
 
     echo '<form method="post" enctype="multipart/form-data" class="card">';
@@ -1882,6 +1892,7 @@ function page_create() {
     foreach ($suppliers as $s) echo '<option value="' . $s['id'] . '">' . e($s['name']) . '</option>';
     echo '</select></div>';
     echo '<div id="party_other" style="display:none"><label>نام طرف (برای «سایر»)</label><input name="party_name" id="party_name" placeholder="نام شخص/شرکت"></div>';
+    echo '<div><label>کد ملی / شناسه ملی طرف حساب</label><input name="national_id" id="national_id" maxlength="14" inputmode="numeric" pattern="[0-9۰-۹]{10,14}" placeholder="کد ملی ۱۰ رقم یا شناسه ملی"></div>';
     echo '<div id="riskbox" style="grid-column:1/-1;display:none"></div>';
 
     if ($kind === 'payment') {
