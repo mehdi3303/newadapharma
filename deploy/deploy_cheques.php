@@ -1333,6 +1333,8 @@ function formatGreg(g){
   return toFaDigits(g[2])+' '+gregMonthsEn()[g[1]-1]+' '+toFaDigits(g[0])+'  /  '+g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
 }
 function initJDate(input){
+  if(input.dataset.jdateReady==='1') return;
+  input.dataset.jdateReady='1';
   /* فیلد مخفی میلادی، در همان کادر فیلد قرار دارد (برای فرم‌های متعدد با نام تکراری) */
   var hidden=null, hint=null;
   var p=input.parentElement;
@@ -1447,6 +1449,8 @@ function faNumWords(n){
   return parts.join(' و ');
 }
 function initAmount(inp){
+  if(inp.dataset.amountReady==='1') return;
+  inp.dataset.amountReady='1';
   var words = inp.id==='amount_toman'
       ? document.getElementById('amount_words')
       : inp.parentElement.querySelector('.amount-words');
@@ -1580,6 +1584,9 @@ function docClear(){
   document.getElementById('doc_chip').innerHTML='';
 }
 function initDocPick(){
+  var root=document.getElementById('docpick');
+  if(root && root.dataset.docReady==='1') return;
+  if(root) root.dataset.docReady='1';
   var kind=document.getElementById('doc_type');
   var q=document.getElementById('doc_q');
   var res=document.getElementById('doc_results');
@@ -1634,6 +1641,8 @@ function updateChequePreview(){
 }
 function initChequePreview(){
   if(!cpEl('cheque_preview')) return;
+  if(cpEl('cheque_preview').dataset.previewReady==='1') return;
+  cpEl('cheque_preview').dataset.previewReady='1';
   var ids=['amount_toman','national_id','cheque_number','party_name','party_type','customer_id','supplier_id'];
   ids.forEach(function(id){ var el=document.getElementById(id); if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
   ['sayyad_id','bank_name'].forEach(function(nm){ var el=document.getElementsByName(nm)[0]; if(el){ el.addEventListener('input',updateChequePreview); el.addEventListener('change',updateChequePreview); } });
@@ -1669,6 +1678,13 @@ document.addEventListener('DOMContentLoaded',function(){
       try { updateChequePreview(); } catch(e) {}
     }
   });
+});
+/* اجرای پشتیبان برای هاست‌هایی که اسکریپت را بعد از DOMContentLoaded تزریق می‌کنند */
+window.addEventListener('load',function(){
+  try { document.querySelectorAll('.jdate').forEach(initJDate); } catch(e) {}
+  try { document.querySelectorAll('.amount-input').forEach(initAmount); } catch(e) {}
+  try { initDocPick(); } catch(e) {}
+  try { initChequePreview(); updateChequePreview(); } catch(e) {}
 });
 </script>
 JS;
