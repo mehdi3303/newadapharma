@@ -1236,7 +1236,7 @@ function render_header($title) {
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
     .jfield{position:relative}.jalali-selects{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:5px;margin-bottom:5px}.jalali-selects select{padding:7px 5px;font-size:11px}.jdate{background:#f8fafc!important;color:#475569}
     .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
-    .native-date-fallback{display:flex;align-items:center;gap:6px;margin-top:3px;color:#64748b;font-size:10px}.greg-native{width:auto;padding:2px 5px;font-size:11px;border-radius:6px}.greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
+    .greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
     .greg-hint.empty{color:#cbd5e1;font-weight:600}
     /* جستجوی سند */
     .docpick{position:relative}
