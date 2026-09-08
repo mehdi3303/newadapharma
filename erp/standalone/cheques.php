@@ -1396,8 +1396,9 @@ function initChequePreview(){
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('.jdate').forEach(initJDate);
   document.querySelectorAll('.amount-input').forEach(initAmount);
-  initDocPick();
-  initChequePreview();
+  /* پیش‌نمایش باید مستقل از خطاهای احتمالی جستجوی سند اجرا شود. */
+  try { initChequePreview(); } catch(e) { console.error('cheque preview init', e); }
+  try { initDocPick(); } catch(e) { console.error('document picker init', e); }
   var pt=document.getElementById('party_type');
   if(pt){
     syncPartyFields();
@@ -1410,6 +1411,15 @@ document.addEventListener('DOMContentLoaded',function(){
     if(pn) pn.addEventListener('blur',refreshRisk);
     refreshRisk();
   }
+});
+/* fallback: حتی اگر یک widget دیگر خطا داد، پیش‌نمایش با تغییر فرم به‌روز بماند */
+document.addEventListener('DOMContentLoaded',function(){
+  try { updateChequePreview(); } catch(e) { console.error('cheque preview update', e); }
+  document.addEventListener('input',function(ev){
+    if(ev.target && (ev.target.id==='amount_toman' || ev.target.id==='national_id' || ev.target.name==='bank_name' || ev.target.name==='sayyad_id' || ev.target.id==='cheque_number')) {
+      try { updateChequePreview(); } catch(e) {}
+    }
+  });
 });
 </script>
 JS;
