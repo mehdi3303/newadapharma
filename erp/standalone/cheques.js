@@ -62,6 +62,7 @@ function initJDate(input){
     var g=jalToGreg(jy,jm,jd);
     input.value=toFaDigits(jy+'/'+pad(jm)+'/'+pad(jd));
     if(hidden) hidden.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
+    if(nativeInput) nativeInput.value=g[0]+'-'+pad(g[1])+'-'+pad(g[2]);
     showHint();
   }
   function parseInput(){
@@ -74,6 +75,14 @@ function initJDate(input){
     var parts=hidden.value.split('-');
     if(parts.length===3){ var j=gregToJal(+parts[0],+parts[1],+parts[2]); input.value=toFaDigits(j[0]+'/'+pad(j[1])+'/'+pad(j[2])); }
   }
+  var nativeInput=p ? p.querySelector('.greg-native') : null;
+  if(nativeInput){ nativeInput.addEventListener('change',function(){
+    if(/^\d{4}-\d{2}-\d{2}$/.test(nativeInput.value)){
+      if(hidden) hidden.value=nativeInput.value;
+      var gp=nativeInput.value.split('-'); var jj=gregToJal(+gp[0],+gp[1],+gp[2]);
+      input.value=toFaDigits(jj[0]+'/'+pad(jj[1])+'/'+pad(jj[2])); showHint(); input.dispatchEvent(new Event('change'));
+    }
+  }); }
   showHint();
   var box=null;
   function closeBox(){ if(box){ box.remove(); box=null; } }
@@ -261,7 +270,7 @@ function docSearch(){
   fetch('cheques.php?api=doc_search&kind='+encodeURIComponent(kind.value)+'&q='+encodeURIComponent(term))
     .then(function(r){return r.json();})
     .then(function(d){
-      if(!d.ok||!d.rows||!d.rows.length){ res.innerHTML='<div class="di muted">سندی پیدا نشد — شماره/نوع را بررسی کنید</div>'; return; }
+      if(!d.ok||!d.rows||!d.rows.length){ res.innerHTML='<div class="di muted">سندی در جدول '+(d.source||'اسناد')+' پیدا نشد — شماره یا نام طرف را بررسی کنید</div>'; return; }
       res.innerHTML='';
       d.rows.forEach(function(r){
         var di=document.createElement('div'); di.className='di';

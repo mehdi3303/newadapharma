@@ -128,6 +128,7 @@ function read_toman($key) {
 function post_gregorian($name) {
     /* مقدار میلادی ساخته‌شده توسط تقویم شمسی (hidden)؛ در نبودش، تبدیل سمت سرور */
     $g = trim((string)($_POST[$name . '_g'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) $g = trim((string)($_POST[$name . '_native'] ?? ''));
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $g)) return $g;
     $j = trim((string)($_POST[$name] ?? ''));
     $j = strtr($j, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','/'=>'-',' '=>''));
@@ -195,6 +196,7 @@ function jinput_html($name, $valueGreg, $label, $required = false) {
        . ' placeholder="روی 📅 بزنید یا تایپ کنید: 1405/06/17" autocomplete="off" inputmode="numeric"' . ($required ? ' required' : '') . '>'
        . '<div class="greg-hint" id="greg_' . e($name) . '"></div>'
        . '<input type="hidden" name="' . e($name) . '_g" id="jdg_' . e($name) . '" value="' . e($valueGreg ?: '') . '">'
+       . '<div class="native-date-fallback"><span>اگر تقویم باز نشد، انتخاب میلادی:</span><input type="date" class="greg-native" name="' . e($name) . '_native" value="' . e($valueGreg ?: '') . '"></div>'
        . '</div>';
 }
 function jinput($name, $valueGreg, $label, $required = false) { echo jinput_html($name, $valueGreg, $label, $required); }
@@ -533,11 +535,11 @@ if (($_GET['api'] ?? '') === 'doc_search') {
     $q = strtr($q, array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9'));
     $out = array();
     try {
-        $numCol = pick_col($table, array('invoice_number','number','doc_number','code','reference','order_number','po_number','title'));
-        $amtCol = pick_col($table, array('total_amount','grand_total','total','amount','total_price','final_amount','price','value'));
+        $numCol = pick_col($table, array('invoice_number','invoice_no','factor_number','factor_no','proforma_number','proforma_no','deal_number','deal_no','number','doc_number','document_number','code','reference','reference_no','order_number','order_no','po_number','serial','title'));
+        $amtCol = pick_col($table, array('total_amount','grand_total','final_total','payable_amount','net_amount','total','amount','amount_rial','total_amount_rial','total_price','final_amount','price','value'));
         $curCol = pick_col($table, array('currency','currency_code','cur'));
         $partyCol = pick_col($table, array('customer_name','company_name','supplier_name','party_name','name','title'));
-        if (!$numCol) { echo json_encode(array('ok'=>false)); exit; }
+        if (!$numCol) { echo json_encode(array('ok'=>false, 'source'=>$table, 'message'=>'ستون شماره سند در جدول پیدا نشد'), JSON_UNESCAPED_UNICODE); exit; }
         $sql = "SELECT id, `$numCol` AS num" . ($amtCol ? ", `$amtCol` AS amt" : ', NULL AS amt')
              . ($curCol ? ", `$curCol` AS cur" : ', NULL AS cur')
              . ($partyCol ? ", `$partyCol` AS party" : ', NULL AS party')
@@ -558,8 +560,8 @@ if (($_GET['api'] ?? '') === 'doc_search') {
                 'amt'=>$r['amt']!==null ? (float)$r['amt'] : null,
                 'cur'=>$r['cur'] ?: '', 'party'=>(string)($r['party'] ?? ''), 'kind'=>$kindLabel);
         }
-    } catch (Exception $ex) { echo json_encode(array('ok'=>false, 'err'=>$ex->getMessage())); exit; }
-    echo json_encode(array('ok'=>true, 'rows'=>$out), JSON_UNESCAPED_UNICODE);
+    } catch (Exception $ex) { echo json_encode(array('ok'=>false, 'source'=>$table, 'message'=>'خطا در جدول '.$table, 'err'=>$ex->getMessage()), JSON_UNESCAPED_UNICODE); exit; }
+    echo json_encode(array('ok'=>true, 'source'=>$table, 'rows'=>$out), JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -965,7 +967,7 @@ function render_header($title) {
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
     .jfield{position:relative}
     .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
-    .greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
+    .native-date-fallback{display:flex;align-items:center;gap:6px;margin-top:3px;color:#64748b;font-size:10px}.greg-native{width:auto;padding:2px 5px;font-size:11px;border-radius:6px}.greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
     .greg-hint.empty{color:#cbd5e1;font-weight:600}
     /* جستجوی سند */
     .docpick{position:relative}
