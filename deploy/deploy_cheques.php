@@ -789,8 +789,12 @@ if (($_GET['api'] ?? '') === 'doc_search') {
              . " FROM `$table` WHERE 1=1";
         $args = array();
         if ($q !== '') {
-            if (ctype_digit($q)) { $sql .= " AND (`$numCol` LIKE ? OR id=?)"; $args = array('%'.$q.'%', (int)$q); }
-            else { $sql .= " AND `$numCol` LIKE ?"; $args = array('%'.$q.'%'); }
+            $like = '%'.$q.'%';
+            $searchCols = "`$numCol` LIKE ?";
+            $args = array($like);
+            if ($partyCol) { $searchCols .= " OR `$partyCol` LIKE ?"; $args[] = $like; }
+            if (ctype_digit($q)) { $searchCols .= " OR id=?"; $args[] = (int)$q; }
+            $sql .= " AND (" . $searchCols . ")";
         }
         $sql .= " ORDER BY id DESC LIMIT 15";
         $rows = q_all($sql, $args);
@@ -814,14 +818,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $direction = in_array($_POST['direction'] ?? '', array('received','issued'), true) ? $_POST['direction'] : 'received';
         $amount    = read_toman('amount_toman');  /* ورودی تومان → ریال */
         $sayyad    = trim((string)($_POST['sayyad_id'] ?? ''));
-        $sayyad    = str_replace(array(' ', '-', '_'), '', $sayyad);
+        $sayyad    = strtr(str_replace(array(' ', '-', '_'), '', $sayyad), array('۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9'));
         $chequeNo  = trim((string)($_POST['cheque_number'] ?? ''));
         $dueDate   = post_gregorian('due_date');
         $issueDate = post_gregorian('issue_date') ?: date('Y-m-d');
         $gReturn   = post_gregorian('guarantee_return_date');
 
         if ($amount === null) { flash('مبلغ را به تومان وارد کنید (بزرگ‌تر از صفر).'); }
-        elseif ($sayyad !== '' && (!preg_match('/^[0-9]{8,20}$/', $sayyad))) { flash('شناسه صیاد باید فقط عدد (۱۶ رقم) باشد.'); }
+        elseif ($sayyad !== '' && (!preg_match('/^[0-9]{16}$/', $sayyad))) { flash('شناسه صیاد باید فقط عدد (۱۶ رقم) باشد.'); }
         else {
             if ($sayyad !== '') {
                 $dup = q_one("SELECT id FROM checks WHERE sayyad_id=? AND deleted_at IS NULL", array($sayyad));
@@ -1203,7 +1207,7 @@ function render_header($title) {
     .jdate{text-align:left;direction:ltr;cursor:pointer;background:#fff;padding-left:12px}
     .jfield{position:relative}
     .jfield .jico{position:absolute;left:9px;top:33px;color:#94a3b8;pointer-events:none;font-size:13px;z-index:1}
-    .greg-hint{font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:14px}
+    .greg-hint{display:block;font-size:11px;color:#0891b2;font-weight:700;margin-top:3px;min-height:16px;line-height:16px;white-space:nowrap}
     .greg-hint.empty{color:#cbd5e1;font-weight:600}
     /* جستجوی سند */
     .docpick{position:relative}
@@ -1451,6 +1455,15 @@ function initAmount(inp){
 }
 
 /* پیش‌نمایش تصویر قبل از آپلود */
+function syncPartyFields(){
+  var pt=document.getElementById('party_type');
+  if(!pt) return;
+  var cust=document.getElementById('party_cust'), sup=document.getElementById('party_sup'), other=document.getElementById('party_other');
+  if(cust) cust.style.display = pt.value==='customer' ? 'block' : 'none';
+  if(sup) sup.style.display = pt.value==='supplier' ? 'block' : 'none';
+  if(other) other.style.display = pt.value==='other' ? 'block' : 'none';
+}
+
 document.addEventListener('change',function(ev){
   var t=ev.target;
   if(t.type==='file'){
@@ -1464,9 +1477,7 @@ document.addEventListener('change',function(ev){
   }
   /* انتخاب طرف حساب (جایگزین onchange خراب) */
   if(t.id==='party_type'){
-    var cust=document.getElementById('party_cust'), sup=document.getElementById('party_sup');
-    if(cust) cust.style.display = t.value==='customer' ? 'block' : 'none';
-    if(sup)  sup.style.display  = t.value==='supplier' ? 'block' : 'none';
+    syncPartyFields();
   }
   /* دفترچه چک → شماره بعدی (جایگزین onchange خراب) */
   if(t.id==='cb'){
@@ -1589,7 +1600,7 @@ function updateChequePreview(){
   cpText('cp_cheque', cn&&cn.value.trim()?toFaDigits(cn.value.trim()):'', '_ _ _ _ _ _');
   /* صیاد */
   var sy=document.getElementsByName('sayyad_id')[0];
-  if(sy && sy.value.trim()){ cpText('cp_sayyad', toFaDigits(sy.value.trim().replace(/[^0-9]/g,''))); }
+  if(sy && sy.value.trim()){ cpText('cp_sayyad', toFaDigits(toEnDigits(sy.value.trim()).replace(/[^0-9]/g,''))); }
   else cpText('cp_sayyad','','_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _');
   /* بانک */
   var bk=document.getElementsByName('bank_name')[0];
@@ -1598,7 +1609,7 @@ function updateChequePreview(){
   var due=document.querySelector("input[name='due_date']");
   var iss=document.querySelector("input[name='issue_date']");
   var grt=document.querySelector("input[name='guarantee_return_date']");
-  var dt=due||grt||iss;
+  var dt = (grt && grt.value.trim()) ? grt : ((due && due.value.trim()) ? due : iss);
   cpText('cp_date', dt&&dt.value.trim()?dt.value.trim():'', '۱۴۰_/__/__');
   /* ذی‌نفع */
   var pt=document.getElementById('party_type');
@@ -1628,6 +1639,7 @@ document.addEventListener('DOMContentLoaded',function(){
   initChequePreview();
   var pt=document.getElementById('party_type');
   if(pt){
+    syncPartyFields();
     pt.dispatchEvent(new Event('change'));
     ['party_type','customer_id','supplier_id','party_name'].forEach(function(id){
       var el=document.getElementById(id);
@@ -1843,7 +1855,7 @@ function page_create() {
        . '<input name="amount_toman" id="amount_toman" class="amount-input" inputmode="numeric" autocomplete="off" required placeholder="مثلاً ۵۰,۰۰۰,۰۰۰" style="font-size:16px;font-weight:700">'
        . '<div id="amount_words" class="amount-words"></div></div>';
     echo '<div><label>شماره چک</label><input name="cheque_number" id="cheque_number"></div>';
-    echo '<div><label>شناسه صیاد (۱۶ رقم)</label><input name="sayyad_id" maxlength="20" inputmode="numeric" placeholder="در صورت داشتن"></div>';
+    echo '<div><label>شناسه صیاد (۱۶ رقم)</label><input name="sayyad_id" maxlength="16" pattern="[0-9۰-۹]{16}" inputmode="numeric" autocomplete="off" placeholder="دقیقاً ۱۶ رقم — در صورت داشتن"></div>';
     echo '<div><label>سری / سریال</label><div style="display:flex;gap:6px"><input name="series" placeholder="سری"><input name="serial" placeholder="سریال"></div></div>';
     echo '<div><label>نام بانک</label><input name="bank_name" list="banklist"><datalist id="banklist">';
     foreach (array('ملت','صادرات','ملی','سپه','تجارت','رفاه','پارسیان','پاسارگاد','سامان','آینده','کشاورزی','مسکن','شهر') as $bn) echo '<option>' . $bn . '</option>';
@@ -1869,7 +1881,7 @@ function page_create() {
     echo '<div id="party_sup"' . ($defaultParty!=='supplier'?' style="display:none"':'') . '><label>انتخاب تأمین‌کننده</label><select name="supplier_id" id="supplier_id"><option value="">—</option>';
     foreach ($suppliers as $s) echo '<option value="' . $s['id'] . '">' . e($s['name']) . '</option>';
     echo '</select></div>';
-    echo '<div><label>نام طرف (در صورت «سایر»)</label><input name="party_name" id="party_name" placeholder="نام شخص/شرکت"></div>';
+    echo '<div id="party_other" style="display:none"><label>نام طرف (برای «سایر»)</label><input name="party_name" id="party_name" placeholder="نام شخص/شرکت"></div>';
     echo '<div id="riskbox" style="grid-column:1/-1;display:none"></div>';
 
     if ($kind === 'payment') {
@@ -1902,7 +1914,7 @@ function page_create() {
               <option value="deal">معامله</option>
               <option value="purchase_order">سفارش خرید</option>
             </select>
-            <input id="doc_q" placeholder="شماره سند را تایپ کنید (یا بخشی از آن)…" autocomplete="off" style="flex:1">
+            <input id="doc_q" placeholder="شماره یا نام طرف حساب را جستجو کنید…" autocomplete="off" style="flex:1">
           </div>
           <input type="hidden" name="ref_type" id="ref_type">
           <input type="hidden" name="ref_id" id="ref_id">
@@ -1918,7 +1930,7 @@ function page_create() {
         <div class="cp-top">
           <div>
             <div class="cp-bank" id="cp_bank"><span class="cp-ph">بانک …</span></div>
-            <div class="cp-type">BANK TEJARAT · چک صیادی (نمونه پیش‌نمایش)</div>
+            <div class="cp-type">چک صیادی · پیش‌نمایش کنترلی</div>
           </div>
           <div class="cp-nums" dir="ltr">
             <div>کد ملی صادرکننده: <b id="cp_national">—</b></div>
@@ -1935,7 +1947,7 @@ function page_create() {
         <div class="cp-row">
           <div style="flex:1"><small style="font-size:10px;color:#6b7280;font-weight:700">مبلغ به حروف:</small>
             <div class="cp-words" id="cp_words"><span class="cp-ph">مبلغ چک به حروف اینجا نوشته می‌شود…</span></div></div>
-          <div><small style="font-size:10px;color:#6b7280;font-weight:700">مبلغ به ریال/تومان:</small>
+          <div><small style="font-size:10px;color:#6b7280;font-weight:700">مبلغ به تومان:</small>
             <div class="cp-amount" id="cp_amount" dir="ltr"><span class="cp-ph">0</span><small>تومان</small></div></div>
         </div>
         <div class="cp-sign">امضا / مهر صادرکننده</div>
@@ -1943,7 +1955,7 @@ function page_create() {
       <div class="muted" style="text-align:center;margin-top:8px">این فقط پیش‌نمایش کنترلی است و روی چک واقعی شما چاپ نمی‌شود.</div>
     </div>';
 
-    echo '<button class="btn btn-primary" style="margin-top:14px">💾 ثبت چک</button>';
+    echo '<button type="submit" class="btn btn-primary" style="margin-top:14px">💾 ثبت چک</button>';
     echo '</form>';
 
     /* فرم مستقل ثبت دفترچه چک (بیرون از فرم اصلی تا action تداخل نکند) */
