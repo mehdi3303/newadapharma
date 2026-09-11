@@ -44,9 +44,7 @@ SWITCHADD;
 if(substr_count($c,$old)!==1)exit("ABORTED: switch anchor not found. no files changed.\n");
 $c=str_replace($old,$new,$c);
 // Load report settings for the existing view.
-$anchor=<<<'EMAILLOAD'
-        $emailEnabled = '0';
-EMAILLOAD;
+$anchor='$emailEnabled =';
 $load=<<<'REPORTLOAD'
         $reportSettings = [];
         try {
@@ -59,8 +57,9 @@ $load=<<<'REPORTLOAD'
             $reportSettings = [];
         }
 REPORTLOAD;
-if(substr_count($c,$anchor)!==1)exit("ABORTED: index email anchor not found. no files changed.\n");
-$c=str_replace($anchor,$load."\n".$anchor,$c);
+$anchorPos=strpos($c,$anchor);
+if($anchorPos===false)exit("ABORTED: index email anchor not found. no files changed.\n");
+$c=substr($c,0,$anchorPos).$load.PHP_EOL.substr($c,$anchorPos);
 // Add report handler before the existing email handler.
 $anchor=<<<'EMAILMETHOD'
     /** Save the global inbound email sync switch. */
