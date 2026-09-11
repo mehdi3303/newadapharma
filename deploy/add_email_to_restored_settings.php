@@ -13,11 +13,11 @@ if(strpos($c,'private function updateEmail(): void')!==false){exit("ABORTED: upd
 $tabAnchor = <<<'TABANCHOR'
         <a href="?tab=reports" class="st-tab <?= $activeTab === 'reports' ? 'active' : '' ?>">📊 Reports</a>
 TABANCHOR;
-$tabAdd = $tabAnchor . "\n" . <<<'TAB'
+$tabAdd = $tabAnchor . PHP_EOL . <<<'TAB'
         <a href="?tab=email" class="st-tab <?= $activeTab === 'email' ? 'active' : '' ?>">✉️ Email</a>
 TAB;
 if(substr_count($v,$tabAnchor)!==1){exit("ABORTED: Reports tab anchor not found exactly once. no files changed.\n");}
-$viewEnd="    </div>\n</div>";
+$viewEnd = "    </div>" . PHP_EOL . "</div>";
 $emailSection=<<<'HTML'
 
         <!-- EMAIL TAB -->
@@ -89,7 +89,7 @@ $methodAnchor = <<<'METHODANCHOR'
 METHODANCHOR;
 if(substr_count($c,$methodAnchor)!==1){exit("ABORTED: controller method anchor not found exactly once. no files changed.\n");}
 $newV=str_replace($tabAnchor,$tabAdd,$v);
-$newV=str_replace($viewEnd,$emailSection."\n\n".$viewEnd,$newV);
+$newV=str_replace($viewEnd,$emailSection.PHP_EOL.PHP_EOL.$viewEnd,$newV);
 $newC=str_replace($indexAnchor,$indexAdd,$c);
 $newC=str_replace($methodAnchor,$method.$methodAnchor,$newC);
 if($newV===$v||$newC===$c){exit("ABORTED: no complete change produced. no files changed.\n");}
