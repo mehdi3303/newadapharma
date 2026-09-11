@@ -1,8 +1,5 @@
 <?php
-/**
- * Surgical Email-tab addition to the verified restored Settings files.
- * Does not rebuild or replace the existing Settings view.
- */
+/** Surgical Email-tab addition to the verified restored Settings files. */
 const TOKEN='MyStrongPass_2026_xyz';
 header('Content-Type:text/plain; charset=utf-8');
 if(!isset($_GET['token'])||!hash_equals(TOKEN,(string)$_GET['token'])){http_response_code(403);exit("403\n");}
@@ -11,9 +8,11 @@ $view=$root.'/app/views/settings/index.php';
 $controller=$root.'/app/controllers/SettingsController.php';
 if(!is_file($view)||!is_file($controller)){exit("ERROR: required file missing\n");}
 $v=file_get_contents($view); $c=file_get_contents($controller);
-if(strpos($v,"href=\"?tab=email\"")!==false || strpos($v,"name=\"email_sync_enabled\"")!==false){exit("ABORTED: Email markup already exists; no files changed.\n");}
+if(strpos($v,'href="?tab=email"')!==false || strpos($v,'name="email_sync_enabled"')!==false){exit("ABORTED: Email markup already exists; no files changed.\n");}
 if(strpos($c,'private function updateEmail(): void')!==false){exit("ABORTED: updateEmail already exists; no files changed.\n");}
-$tabAnchor='        <a href="?tab=reports" class="st-tab <?= $activeTab === \'reports\' ? \'active\' : \'\' ?>">📊 Reports</a>';
+$tabAnchor = <<<'TABANCHOR'
+        <a href="?tab=reports" class="st-tab <?= $activeTab === 'reports' ? 'active' : '' ?>">📊 Reports</a>
+TABANCHOR;
 $tabAdd = $tabAnchor . "\n" . <<<'TAB'
         <a href="?tab=email" class="st-tab <?= $activeTab === 'email' ? 'active' : '' ?>">✉️ Email</a>
 TAB;
@@ -49,10 +48,23 @@ $emailSection=<<<'HTML'
         </div>
 HTML;
 if(substr_count($v,$viewEnd)!==1){exit("ABORTED: view end anchor not found exactly once. no files changed.\n");}
-$indexAnchor="        unset($_SESSION['form_errors']);";
-$indexAdd=$indexAnchor."\n\n        $emailEnabled = '0';\n        try {\n            $db = Database::getInstance()->getConnection();\n            $q = $db->prepare(\"SELECT `value` FROM settings WHERE `key` = 'email_sync_enabled' LIMIT 1\");\n            $q->execute();\n            $emailEnabled = (string)($q->fetchColumn() ?: '0');\n        } catch (Throwable $e) {\n            $emailEnabled = '0';\n        }";
+$indexAnchor = <<<'INDEXANCHOR'
+        unset($_SESSION['form_errors']);
+INDEXANCHOR;
+$indexAdd = $indexAnchor . <<<'INDEX'
+
+        $emailEnabled = '0';
+        try {
+            $db = Database::getInstance()->getConnection();
+            $q = $db->prepare("SELECT `value` FROM settings WHERE `key` = 'email_sync_enabled' LIMIT 1");
+            $q->execute();
+            $emailEnabled = (string)($q->fetchColumn() ?: '0');
+        } catch (Throwable $e) {
+            $emailEnabled = '0';
+        }
+INDEX;
 if(substr_count($c,$indexAnchor)!==1){exit("ABORTED: controller index anchor not found exactly once. no files changed.\n");}
-$method=<<<'PHP'
+$method=<<<'METHOD'
 
     /** Save the global inbound email sync switch. */
     private function updateEmail(): void
@@ -70,8 +82,11 @@ $method=<<<'PHP'
 
         $this->redirect('settings?tab=email');
     }
-PHP;
-$methodAnchor="    /**\n     * Upload logo";
+METHOD;
+$methodAnchor = <<<'METHODANCHOR'
+    /**
+     * Upload logo
+METHODANCHOR;
 if(substr_count($c,$methodAnchor)!==1){exit("ABORTED: controller method anchor not found exactly once. no files changed.\n");}
 $newV=str_replace($tabAnchor,$tabAdd,$v);
 $newV=str_replace($viewEnd,$emailSection."\n\n".$viewEnd,$newV);
