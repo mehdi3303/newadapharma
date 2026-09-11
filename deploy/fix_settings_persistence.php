@@ -12,13 +12,22 @@ $first=strpos($v,$needle); $second=$first===false?false:strpos($v,$needle,$first
 if($second===false)exit("ABORTED: expected two defaults section markers. no files changed.\n");
 $v=substr($v,0,$second).str_replace('value="defaults"','value="reports"',$needle).substr($v,$second+strlen($needle));
 // Company identity: persist the existing bank_details textarea too.
-$old="            'tax_number'   => $this->post('tax_number', ''),";
-$new=$old."\n            'bank_details' => $this->post('bank_details', ''),";
+$old = <<<'IDENTITY'
+            'tax_number'   => $this->post('tax_number', ''),
+IDENTITY;
+$new=$old.'            \'bank_details\' => $this->post(\'bank_details\', \'\'),' . PHP_EOL;
 if(substr_count($c,$old)!==1)exit("ABORTED: identity anchor not found. no files changed.\n");
 $c=str_replace($old,$new,$c);
 // Documents: persist the fields already present in the restored form.
-$old="            'default_notes'    => $this->post('default_notes', ''),";
-$new=$old."\n            'quotation_prefix' => strtoupper(trim($this->post('quotation_prefix', 'QTN'))),\n            'quotation_counter' => (int)$this->post('quotation_counter', 0),\n            'invoice_prefix' => strtoupper(trim($this->post('invoice_prefix', 'INV'))),\n            'invoice_counter' => (int)$this->post('invoice_counter', 0),";
+$old = <<<'DEFAULTS'
+            'default_notes'    => $this->post('default_notes', ''),
+DEFAULTS;
+$new=$old . <<<'DOCFIELDS'
+            'quotation_prefix' => strtoupper(trim($this->post('quotation_prefix', 'QTN'))),
+            'quotation_counter' => (int)$this->post('quotation_counter', 0),
+            'invoice_prefix' => strtoupper(trim($this->post('invoice_prefix', 'INV'))),
+            'invoice_counter' => (int)$this->post('invoice_counter', 0),
+DOCFIELDS;
 if(substr_count($c,$old)!==1)exit("ABORTED: defaults anchor not found. no files changed.\n");
 $c=str_replace($old,$new,$c);
 // Add reports dispatch.
