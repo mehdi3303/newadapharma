@@ -17,7 +17,7 @@ $tabAdd = $tabAnchor . PHP_EOL . <<<'TAB'
         <a href="?tab=email" class="st-tab <?= $activeTab === 'email' ? 'active' : '' ?>">✉️ Email</a>
 TAB;
 if(substr_count($v,$tabAnchor)!==1){exit("ABORTED: Reports tab anchor not found exactly once. no files changed.\n");}
-$viewEnd = "    </div>" . PHP_EOL . "</div>";
+$viewEnd = null;
 $emailSection=<<<'HTML'
 
         <!-- EMAIL TAB -->
@@ -47,7 +47,7 @@ $emailSection=<<<'HTML'
             </form>
         </div>
 HTML;
-if(substr_count($v,$viewEnd)!==1){exit("ABORTED: view end anchor not found exactly once. no files changed.\n");}
+
 $indexAnchor = <<<'INDEXANCHOR'
         unset($_SESSION['form_errors']);
 INDEXANCHOR;
@@ -89,7 +89,10 @@ $methodAnchor = <<<'METHODANCHOR'
 METHODANCHOR;
 if(substr_count($c,$methodAnchor)!==1){exit("ABORTED: controller method anchor not found exactly once. no files changed.\n");}
 $newV=str_replace($tabAnchor,$tabAdd,$v);
-$newV=str_replace($viewEnd,$emailSection.PHP_EOL.PHP_EOL.$viewEnd,$newV);
+if(!preg_match('/\R[ \t]*<\/div>[ \t]*\R[ \t]*<\/div>[ \t]*\z/', $newV, $endMatch, PREG_OFFSET_CAPTURE)){exit("ABORTED: final view closing tags not found. no files changed.\n");}
+$viewEnd = $endMatch[0][0];
+$viewEndPos = $endMatch[0][1];
+$newV=substr($newV,0,$viewEndPos).$emailSection.PHP_EOL.$viewEnd;
 $newC=str_replace($indexAnchor,$indexAdd,$c);
 $newC=str_replace($methodAnchor,$method.$methodAnchor,$newC);
 if($newV===$v||$newC===$c){exit("ABORTED: no complete change produced. no files changed.\n");}
