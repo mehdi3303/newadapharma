@@ -5,6 +5,6 @@ if(!isset($_GET['token'])||!hash_equals(TOKEN,(string)$_GET['token'])){http_resp
 $file='/home/adapharm/erp/app/views/communications/_v3_compose.php';
 $backs=glob($file.'.bak-editor-fix-*');
 if(!$backs)exit("NO_BACKUP_FOUND\n");
-usort($backs,SORT_STRING);$backup=end($backs);
+sort($backs,SORT_STRING);$backup=end($backs);
 if(!copy($backup,$file))exit("RESTORE_FAILED\n");
 echo "RESTORED: ".basename($backup)."\nDelete checkmodel.php now.\n";
